@@ -1,0 +1,6 @@
+interface:
+  short_description: "スキルの定義・リンクと監査に必要な環境を確認し、利用可否と不足への対処をまとめる"
+  default_prompt: "$security-audit-preflight を使って、このリポジトリの Codex スキルと対象プロジェクトで監査する準備ができているかを確認してください。"
+
+policy:
+  allow_implicit_invocation: false
