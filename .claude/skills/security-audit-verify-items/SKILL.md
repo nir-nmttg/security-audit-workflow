@@ -10,6 +10,8 @@ allowed-tools: Bash(bash *security-audit-verify-items/scripts/prepare.sh*), Bash
 
 引数: $ARGUMENTS
 
+Claude の推論レベル: ${CLAUDE_EFFORT}
+
 Codex の security-audit-sync-issues が作った集約 Issue（`[yyyy-mm-dd] セキュリティ監査の調査・判定一覧`）の、ユーザーが指定した項目（省くと要検証・未検証・未完了の工程・範囲のすべて）を調べ直す。項目ごとの調査は Security Audit Item Verifier サブエージェントに並列で任せ、すべての結果をユーザーと確かめてから、確定を修正 Issue にし、集約 Issue をまとめて更新する。修正はこのスキルでは行わない（`agent:autofix` の付いた修正 Issue は、自動で修正するエージェントに任せられる）。
 
 ## 呼び方
@@ -59,7 +61,7 @@ Codex の security-audit-sync-issues が作った集約 Issue（`[yyyy-mm-dd] �
 ## 1. 調査（Security Audit Item Verifier、並列）
 
 - 同時に動かす Security Audit Item Verifier は最大 4 体。`needs` から再開したものも数え、親の仲介を待っているものは数えない。空きができたら、表の順に次の項目の Security Audit Item Verifier を起動する。
-- 起動は Agent ツールで `subagent_type: "security-audit-item-verifier"` を指定し（`model` は渡さない）、次だけを伝える。
+- 起動は Agent ツールで `subagent_type: "security-audit-item-verifier"` と、`effort` に上の「Claude の推論レベル」（空や `auto` のときは `high`）を指定し（`model` は渡さない）、次だけを伝える。
 
   ```text
   あなたは security-audit-verify-items の Security Audit Item Verifier です。実行フォルダ <run> で、集約 Issue <URL> の項目 <番号> を、コミット <VERIFY_SHA> で調べてください。
