@@ -38,11 +38,12 @@ flowchart LR
 
 | エージェント | 推奨 | 利用枠に余裕があるとき |
 | --- | --- | --- |
-| Codex（監査） | GPT-6.1 Sol（`gpt-6.1-sol`）、推論レベル high | GPT-6 Astra（`gpt-6-astra`）、推論レベル high |
+| Codex（監査） | GPT-6.2 Sol（`gpt-6.2-sol`）、推論レベル high | GPT-6.2 Astra（`gpt-6.2-astra`）、推論レベル high |
 | Claude Code（調べ直し） | Opus 5.5（`claude-opus-5-5`）、推論レベル high | Fable 5.2（`claude-fable-5-2`）、推論レベル high |
 
 モデルは、Codex ではスケジュールの設定（手で呼ぶときはセッション）で、Claude Code では security-audit-verify-items を呼ぶセッションで選ぶ。\
-項目を調べる Security Audit Item Verifier は、セッションのモデルによらず、定義で Opus 5.5・推論レベル high に固定されている。
+項目を調べる Security Audit Item Verifier は、セッションのモデルによらず、定義で Opus 5.5 に固定されている。\
+推論レベルは、security-audit-verify-items を呼んだ時点のセッションの推論レベルに合わせる（わからないときは high）。
 
 ## はじめに
 
