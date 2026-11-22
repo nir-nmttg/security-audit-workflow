@@ -69,7 +69,9 @@ expect 2 ".. を含む cd は止める" Bash "{\"command\":\"cd $run/worktree/..
 out2=$(bash "$dir/prepare.sh" "$repo" "$sha") || ng "2 回目の prepare.sh が成功する"
 run2=$(sed -n 's/^run //p' <<<"$out2")
 runs+=("$run2")
-[[ ! -d $run/worktree && -d $run/ledger ]] && ok "新しく作ると、同じリポジトリの前の作業ツリーを消して記録は残す" || ng "前の作業ツリーを消して記録は残す"
+[[ -f $run/worktree/app/a.rb && -f $run2/worktree/app/a.rb ]] && ok "新しく作っても、同じリポジトリのほかの実行の作業ツリーは消さない" || ng "ほかの実行の作業ツリーは消さない"
+grep -qxF "other_worktree $run" <<<"$out2" && ok "作業ツリーが残っているほかの実行を知らせる" || ng "作業ツリーが残っているほかの実行を知らせる: $out2"
+bash "$dir/cleanup.sh" "$run" >/dev/null
 expect 2 "作業ツリーを消した実行フォルダは使えない" Read "{\"file_path\":\"$run/items/A03.json\"}"
 
 out3=$(bash "$dir/prepare.sh" --resume "$run") && [[ -f $run/worktree/app/a.rb ]] && ok "--resume で作業ツリーを作り直す" || ng "--resume で作業ツリーを作り直す: $out3"

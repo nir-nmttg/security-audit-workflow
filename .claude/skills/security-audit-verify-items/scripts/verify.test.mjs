@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
-import { checkBody, checkIssue, checkSecrets, items, parse, pick, same } from "./verify.mjs";
+import { checkBody, checkIssue, checkSecrets, items, lock, parse, pick, same, unlock } from "./verify.mjs";
 
 const SCRIPT = path.join(path.dirname(fileURLToPath(import.meta.url)), "verify.mjs");
 const SHA2 = "b".repeat(40);
@@ -135,11 +135,81 @@ test("check-body は新しい番号を最大の番号より後に限り、届け
   assert.ok(checkBody(before, reused, ["U01"], ["A03"]).includes("new_number_used:A03"));
 });
 
-test("check-body は対象の A 番号の項目が消えたときと 60,000 字を超えたときに止める", () => {
+test("check-body は対象の A 番号の項目が消えたときに止め、全文の長さでは止めない", () => {
   const before = body({ needs: ["A02", "A03"] });
   assert.deepEqual(checkBody(before, body({ needs: ["A03"] }), ["A02"]), ["target_not_in_after:A02"]);
+  // 上限は本文とコメントに分ける split で確かめる
   const long = body({ needs: ["A02", "A03"], extra: { A02: [`- **概要2**: ${"あ".repeat(60000)}`] } });
-  assert.ok(checkBody(before, long, ["A02"]).some((r) => r.startsWith("too_long:")));
+  assert.deepEqual(checkBody(before, long, ["A02"]), []);
+});
+
+test("verify.mjs から compose と split を呼べ、上限を超える全文は分けて戻すと元に戻る", () => {
+  // 前準備
+  const full = body({ needs: ["A02", "A03"], extra: { A02: [`- **概要2**: ${"あ".repeat(300)}`] } });
+  const dir = path.dirname(tmp("full.md", full));
+  const fullFile = path.join(dir, "full.md");
+  const comments = path.join(dir, "comments.json");
+  fs.writeFileSync(comments, "[]");
+  // 実行
+  const r = run(["split", fullFile, path.join(dir, "out"), "--body", fullFile, "--comments", comments, "--max", "600"]);
+  // 検証
+  assert.equal(r.code, 0, r.err);
+  const plan = JSON.parse(fs.readFileSync(path.join(dir, "out", "plan.json"), "utf8")).plan;
+  assert.ok(plan.length >= 2);
+  const base = "https://github.com/o/r/issues/1#issuecomment-";
+  fs.writeFileSync(comments, JSON.stringify(plan.map((p, i) => ({ id: i + 1, body: fs.readFileSync(p.file, "utf8"), html_url: base + (i + 1) }))));
+  const urls = plan.flatMap((p, i) => ["--url", `${p.section}:${p.part}=${base}${i + 1}`]);
+  assert.equal(run(["fill", path.join(dir, "out", "body.md"), path.join(dir, "body.md"), ...urls]).code, 0);
+  assert.equal(run(["compose", path.join(dir, "body.md"), comments, path.join(dir, "back.md")]).code, 0);
+  assert.equal(fs.readFileSync(path.join(dir, "back.md"), "utf8"), full);
+});
+
+test("split は本文だけで上限を超えるとき終了コード 1 で止める", () => {
+  const full = body({ needs: ["A02"] });
+  const file = tmp("full.md", full);
+  const comments = path.join(path.dirname(file), "c.json");
+  fs.writeFileSync(comments, "[]");
+  const r = run(["split", file, path.join(path.dirname(file), "out"), "--body", file, "--comments", comments, "--max", "100"]);
+  assert.equal(r.code, 1);
+  assert.match(r.out, /^(too_long_body|details_too_long):/);
+});
+
+function lockRun() {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "verify-items-lock-"));
+  const make = (name) => {
+    const run = path.join(root, name);
+    fs.mkdirSync(run);
+    fs.writeFileSync(path.join(run, "repo"), "/x\n");
+    return run;
+  };
+  return { a: make("a"), b: make("b") };
+}
+
+test("lock はほかの実行が持っている間は取れず、持ち主が外すと取れる", () => {
+  // 前準備
+  const { a, b } = lockRun();
+  const url = "https://github.com/o/r/issues/1";
+  // 実行・検証
+  assert.equal(lock(a, url), "ok");
+  assert.equal(lock(a, url), "ok");
+  process.exitCode = 0;
+  assert.match(lock(b, url), /^locked /);
+  process.exitCode = 0;
+  assert.match(unlock(b, url), /^locked /);
+  process.exitCode = 0;
+  assert.equal(unlock(a, url), "ok");
+  assert.equal(lock(b, url), "ok");
+});
+
+test("lock は 30 分を過ぎた持ち主から引き継ぐ", () => {
+  // 前準備
+  const { a, b } = lockRun();
+  const url = "https://github.com/o/r/issues/1";
+  lock(a, url, Date.now() - 31 * 60 * 1000);
+  // 実行
+  const r = lock(b, url);
+  // 検証
+  assert.match(r, /^ok taken_over:/);
 });
 
 test("check-body は冒頭の件数の桁が変わっても通す", () => {

@@ -138,7 +138,8 @@ $security-audit-sync-issues --profile quick
 
 Security Audit Item Verifier が項目ごとに並列で調べ、途中でコマンドを実行してよいかの確認や、質問をすることがある。\
 すべての結果をユーザーと確かめてから、確定を修正 Issue にし、集約 Issue をまとめて更新する（コードは直さない）。\
-作業用ファイルは、監査するプロジェクトではなく、このスキル集を clone した場所の `artifacts/security-audit-verify-items/`（gitignore 済み）に置く。
+作業用ファイルは、監査するプロジェクトではなく、このスキル集を clone した場所の `artifacts/security-audit-verify-items/`（gitignore 済み）に置く。\
+項目を分けて、別々のセッションで同時に呼んでもよい（集約 Issue への書き込みは 1 つずつ順番に行う）。
 
 > [!WARNING]
 > 監査が未完了の集約 Issue は、security-audit-sync-issues で同じ実行を再開すると監査用の区画が組み直され、調べ直した内容が消えることがある。\
@@ -207,6 +208,8 @@ Codex 用は `$スキル名`、Claude Code 用は `/スキル名` で呼ぶ。
 - **Issue が作られない**: まず Codex のセッションを確かめ、ガードレールで止まっていれば続きを進めるよう指示する。\
   止まっていなければ、Issue を書くリポジトリが非公開で、Issue が有効かを確かめる。\
   GitHub に書けなくても、監査の成果物は端末に残る。
+- **集約 Issue の本文に詳細がなく、「詳細:」のリンクだけがある**: 本文が GitHub の上限を超えたので、区分ごとの詳細を集約 Issue のコメントに移した。\
+  詳細を直すときは、リンク先のコメントの該当する項目を書き換える。
 - **調べ直した内容が集約 Issue から消えた**: 調べ直したあとに、security-audit-sync-issues で未完了の同じ実行を再開したため。\
   再開するつもりなら、再開を済ませてから調べ直す。
 

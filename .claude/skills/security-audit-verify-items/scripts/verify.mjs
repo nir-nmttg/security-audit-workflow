@@ -3,19 +3,26 @@
 //   pick                                  標準入力の gh issue list の JSON から、最新の集約 Issue の番号を出す
 //   items <本文>                           項目ごとの区分・ID・全文と、番号を省いたときの対象を JSON で出す（調査開始時の控えに使う）
 //   same <控えの JSON> <本文> <番号...>      項目の全文が控えと同じかを番号ごとに出す（違えば終了コード 1）
-//   check-body <前の本文> <後の本文> --targets A03,U01 [--new A20,A21] [--remove A04]
+//   check-body <前の全文> <後の全文> --targets A03,U01 [--new A20,A21] [--remove A04]
 //                                         対象の項目・件数・追記の行のほかが変わっていないかを確かめる（外れたら終了コード 1）
+//                                         文字数の上限は、本文とコメントに分ける split で確かめる
 //                                         --remove は統合して消す対象の番号（残す項目の詳細に「（統合: A04）」が要る）
 //   check-issue <下書き> --fingerprint <ID> --sha <SHA> --worktree <作業ツリー>
 //                                         修正 Issue の下書きのタイトル・マーカー・コードのリンク・秘密らしい文字列を確かめる（外れたら終了コード 1）
 //   check-secrets <ファイル> --worktree <作業ツリー>
 //                                         作業ツリーの .env* の値やトークンらしい文字列、置き換え忘れの {{...}} がないかを確かめる（外れたら終了コード 1）
+//   extract / compose / split / fill       集約 Issue の本文と区分ごとの詳細コメントを行き来する（security-audit-sync-issues の
+//                                         scripts/summary-body.mjs と同じ。使い方はそちらの冒頭）。ほかの検査は compose した全文に対して行う
+//   lock <実行フォルダ> <集約 Issue の URL>   集約 Issue への書き込みを 1 つの実行に限る（ほかの実行が持っていれば終了コード 1）
+//   unlock <実行フォルダ> <集約 Issue の URL> lock を外す
 // 終了コード 2 は集約 Issue の構造の異常（出力は理由の語）、3 は引数の誤り。
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import { COMMANDS as SUMMARY_COMMANDS, CheckError } from "../../../../.agents/skills/security-audit-sync-issues/scripts/summary-body.mjs";
 
-const MAX_CHARS = 60000;
+// lock を持ったまま止まった実行があっても、この時間が過ぎたら引き継ぐ
+const LOCK_STALE_MS = 30 * 60 * 1000;
 const SECTIONS = { 確定: "confirmed", 要検証: "needs_validation", 未検証: "unverified", 棄却: "rejected", "未完了の工程・範囲": "incomplete" };
 const REQUIRED = ["確定", "要検証", "未検証", "棄却"];
 // 番号を省いたときに調べる区分（この順に並べる）
@@ -266,7 +273,6 @@ export function checkBody(beforeText, afterText, targets, added = [], removed = 
     if (!after.items.has(num)) reasons.push(`new_not_in_after:${num}`);
   }
   for (const num of after.items.keys()) if (!before.items.has(num) && !added.includes(num)) reasons.push(`item_added:${num}`);
-  if (after.chars > MAX_CHARS) reasons.push(`too_long:${after.chars}`);
   return reasons;
 }
 
@@ -392,7 +398,72 @@ export function checkIssue(draft, fingerprint, sha, worktree) {
   return [...new Set([...reasons, ...checkSecrets(draft, worktree)])];
 }
 
+function lockDir(run, url) {
+  let real;
+  try {
+    real = fs.realpathSync(run);
+  } catch {
+    fail(`実行フォルダがありません: ${run}`);
+  }
+  if (!fs.existsSync(path.join(real, "repo"))) fail(`このスキルの実行フォルダではありません: ${run}`);
+  const m = /^https?:\/\/([^/]+)\/([^/]+)\/([^/]+)\/issues\/(\d+)\/?$/.exec(url);
+  if (!m) fail(`集約 Issue の URL を https://<host>/<owner>/<repo>/issues/<番号> の形で指定してください: ${url}`);
+  return { run: real, dir: path.join(path.dirname(real), ".locks", m.slice(1).join("_")) };
+}
+
+function readOwner(dir) {
+  try {
+    return JSON.parse(fs.readFileSync(path.join(dir, "owner.json"), "utf8"));
+  } catch {
+    return null;
+  }
+}
+
+export function lock(run, url, now = Date.now()) {
+  const { run: real, dir } = lockDir(run, url);
+  fs.mkdirSync(path.dirname(dir), { recursive: true });
+  const take = (note) => {
+    fs.writeFileSync(path.join(dir, "owner.json"), `${JSON.stringify({ run: real, at: new Date(now).toISOString() })}\n`);
+    return note;
+  };
+  try {
+    fs.mkdirSync(dir);
+    return take("ok");
+  } catch (error) {
+    if (error.code !== "EEXIST") throw error;
+  }
+  const owner = readOwner(dir);
+  if (owner?.run === real) return take("ok");
+  const at = Date.parse(owner?.at ?? "");
+  // owner.json を書く前の一瞬は読めないので、作られたばかりのものは持ち主がいるとみなす
+  const since = Number.isNaN(at) ? fs.statSync(dir).mtimeMs : at;
+  if (now - since > LOCK_STALE_MS) return take(`ok taken_over:${owner?.run ?? "unknown"}`);
+  process.exitCode = 1;
+  return `locked ${owner?.run ?? "unknown"} ${owner?.at ?? ""}`.trim();
+}
+
+export function unlock(run, url) {
+  const { run: real, dir } = lockDir(run, url);
+  if (!fs.existsSync(dir)) return "ok not_locked";
+  const owner = readOwner(dir);
+  if (owner?.run !== real) {
+    process.exitCode = 1;
+    return `locked ${owner?.run ?? "unknown"}`;
+  }
+  fs.rmSync(dir, { recursive: true, force: true });
+  return "ok";
+}
+
 const COMMANDS = {
+  ...SUMMARY_COMMANDS,
+  lock: (args) => {
+    if (args.length !== 2) fail("使い方: verify.mjs lock <実行フォルダ> <集約 Issue の URL>");
+    return lock(args[0], args[1]);
+  },
+  unlock: (args) => {
+    if (args.length !== 2) fail("使い方: verify.mjs unlock <実行フォルダ> <集約 Issue の URL>");
+    return unlock(args[0], args[1]);
+  },
   pick: () => {
     let list;
     try {
@@ -456,11 +527,17 @@ if (process.argv[1]?.endsWith("/verify.mjs")) {
     const out = main(process.argv.slice(2));
     if (out) process.stdout.write(`${out}\n`);
   } catch (error) {
-    if (error instanceof StructureError) {
+    // summary-body.mjs の構造の異常も、名前で見分ける（クラスはモジュールごとに別）
+    if (error instanceof StructureError || error?.constructor?.name === "StructureError") {
       process.stdout.write(`${error.message}\n`);
       process.exit(2);
     }
-    process.stderr.write(`verify.mjs: ${error instanceof UsageError ? error.message : "予期しないエラー"}\n`);
+    if (error instanceof CheckError) {
+      process.stdout.write(`${error.message}\n`);
+      process.exit(1);
+    }
+    const usage = error instanceof UsageError || error?.constructor?.name === "UsageError";
+    process.stderr.write(`verify.mjs: ${usage ? error.message : "予期しないエラー"}\n`);
     process.exit(3);
   }
 }

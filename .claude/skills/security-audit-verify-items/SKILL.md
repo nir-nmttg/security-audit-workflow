@@ -32,7 +32,8 @@ Codex の security-audit-sync-issues が作った集約 Issue（`[yyyy-mm-dd] �
 - 本番の環境・データには触れない。コマンドや開発サーバーを動かすのは、接続先が開発用（localhost・127.0.0.1・Docker Compose のサービス名など）で、メール・決済・Webhook などを外部へ送らない設定とわかるときだけにする。
 - security-audit-sync-issues が同じ実行を再開すると集約 Issue の監査用の区画を組み直すので、このスキルで書いた更新が消えることがある。冒頭の監査の完了状況が未完了の集約 Issue に書くときは、そのことをユーザーに伝える。
 - GitHub に書くのは親だけにする。Security Audit Item Verifier は hook で `gh` を止められ、Write ツールで書けるのは実行フォルダの `items/` だけ（hook は事故を防ぐためのもので、Bash の書き込み先までは見ない）。
-- 同じ対象リポジトリで、このスキルを同時に 2 つ動かさない（新しく準備すると、前の実行の作業ツリーが消える）。
+- 同じ対象リポジトリで、このスキルを同時に動かしてよい。ただし同じ項目を 2 つの実行で調べない。実行ごとに作業ツリーを持ち、ほかの実行の作業ツリーは消さない（`prepare.sh` が `other_worktree` と出したものは、その実行が終わっていれば `cleanup.sh` で消せる）。集約 Issue への書き込みは 4. の `VERIFY lock` で 1 つの実行ずつにする。
+- 集約 Issue は、本文が上限（60,000 文字）を超えると、本文に一覧表を、区分ごとの詳細（`<details>` の並び）を集約 Issue のコメントに置く形になる（本文の各区分の表のあとの `詳細: [<区分>の詳細](<コメントの URL>)` がそのコメントを指す）。読むときは `VERIFY compose` で本文とコメントから 1 つの全文に戻し、調査・検査はその全文に対して行う。書くときは `VERIFY split` で本文とコメントに分ける。本文からリンクしていないコメントは詳細として読まない。
 - 用語: **番号** は集約 Issue の一覧表の No.（`A03`・`U01` など）。**ID** は項目の詳細の **ID** の箇条の値で、確定・要検証・棄却では fingerprint、未検証では項目 ID、未完了の工程・範囲では監査単位 ID。`U` の番号は security-audit-sync-issues が本文を書くたびに振り直す。
 - 以下、`VERIFY` は `node "${CLAUDE_SKILL_DIR}/scripts/verify.mjs"` を表す。終了コード 1 は検査に外れた（出力は理由）、2 は集約 Issue の構造の異常、3 は引数の誤り。
 
@@ -42,7 +43,7 @@ Codex の security-audit-sync-issues が作った集約 Issue（`[yyyy-mm-dd] �
 - **Security Audit Item Verifier**（サブエージェント `security-audit-item-verifier`）: 1 体が 1 項目を読んで調べ、結果と下書きを `items/` に書き、短い状態報告を返す。コマンドの実行・画面での確認・ユーザーへの質問が要るときは、区切って親に頼む（`needs`）。結果ファイルの形は定義（`.claude/agents/security-audit-item-verifier.md`）にある。
 - **実行フォルダ**（`prepare.sh` が `artifacts/security-audit-verify-items/<実行 ID>/` に作る。以下 `<run>`）:
   - `worktree/`: 対象プロジェクトの作業ツリー（`VERIFY_SHA`）
-  - `issues/`: 親が保存した集約 Issue の本文（`summary.md`）と Issue の一覧（`issues.json`）
+  - `issues/`: 親が保存した集約 Issue の全文（`summary.md`。本文と詳細コメントを `VERIFY compose` で戻したもの）と Issue の一覧（`issues.json`）
   - `refs/`: Issue の書式と反映の規則の写し
   - `items/`: Security Audit Item Verifier の結果と下書き
   - `ledger/`: 親だけが書く記録（調査開始時の控え、接続先の確認、観察、書き込みの記録、編集前後の本文）
@@ -55,7 +56,7 @@ Codex の security-audit-sync-issues が作った集約 Issue（`[yyyy-mm-dd] �
 4. `bash "${CLAUDE_SKILL_DIR}/scripts/prepare.sh" <対象のリポジトリ> "$VERIFY_SHA"` で実行フォルダを作る（`.env*` は作業ツリーにコピーされる。同じリポジトリの前の実行の作業ツリーは消える）。サブエージェントがリンクされていなくて止まったら、`scripts/link-skills.sh --claude` を案内して終える。
 5. 作業ツリーに依存を入れる。対象プロジェクトの README・CI に従い、ロックファイルを変えない形で、ライフサイクルスクリプトを止めて入れる（`npm ci --ignore-scripts` など）。入れられなければ、コマンドの実行と画面の確認が要る項目には「実行では確かめられない」と返す。
 6. 作業ツリーの `.env*`・設定ファイル・docker-compose を読み、接続先と外部連携、起動で起きることを [開発サーバーと組み込みブラウザでの確認](references/dev-server.md) の「接続先と起動で起きることを確かめる」の基準で確かめて、結果を `<run>/ledger/env-check.md` に書く（値は書かない）。開発用で外部へ送らないとわからなければ、`run` と `browser` は受けない。
-7. 集約 Issue の本文を `<run>/issues/summary.md` に、リポジトリの Issue の一覧（`gh api --hostname <host> --paginate --slurp "repos/<owner>/<repo>/issues?state=all&per_page=100"` から `pull_request` のある項目を除いたもの）を `<run>/issues/issues.json` に、全 Issue のコメント（`repos/<owner>/<repo>/issues/comments?per_page=100` を全ページ）を `<run>/issues/comments.json` に保存する。`VERIFY items <run>/issues/summary.md > <run>/ledger/start.json` で調査開始時の控えを取る。
+7. 集約 Issue（`gh api --hostname <host> "repos/<owner>/<repo>/issues/<番号>"` の出力）を `<run>/issues/summary-issue.json` に、そのコメントの全ページ（`gh api --hostname <host> --paginate --slurp "repos/<owner>/<repo>/issues/<番号>/comments?per_page=100"`）を `<run>/issues/summary-comments.json` に保存し、`VERIFY extract <run>/issues/summary-issue.json <run>/issues/summary-raw.md` と `VERIFY compose <run>/issues/summary-raw.md <run>/issues/summary-comments.json <run>/issues/summary.md` で全文にする（`--jq .body` は末尾に改行を足すので使わない）。リポジトリの Issue の一覧（`gh api --hostname <host> --paginate --slurp "repos/<owner>/<repo>/issues?state=all&per_page=100"` から `pull_request` のある項目を除いたもの）を `<run>/issues/issues.json` に、全 Issue のコメント（`repos/<owner>/<repo>/issues/comments?per_page=100` を全ページ）を `<run>/issues/comments.json` に保存する。`VERIFY items <run>/issues/summary.md > <run>/ledger/start.json` で調査開始時の控えを取る。
 8. 対象を決める。番号を省いたときは `start.json` の `default_targets`（要検証・未検証・未完了の工程・範囲の順）を一覧で見せ、外す項目を確かめる。
 
 ## 1. 調査（Security Audit Item Verifier、並列）
@@ -98,18 +99,21 @@ Codex の security-audit-sync-issues が作った集約 Issue（`[yyyy-mm-dd] �
 
 1. 書き込みの前の検査。どれかに外れたら、その項目は書かずに報告に回す。
    - 登録先の条件を確かめ直す。
-   - 集約 Issue の最新の本文を `<run>/ledger/body-before.md` に取り、`VERIFY same <run>/ledger/start.json <run>/ledger/body-before.md <書き換える番号...>` で、書き換える項目が調査開始時から変わっていないかを確かめる。書き換える番号には、3. でまとめると決めた先の項目（対象外の項目でも）を含める。
+   - 集約 Issue の最新の本文とコメントを 0. の 7. と同じ方法で取り、`<run>/ledger/raw-before.md`・`<run>/ledger/comments-before.json` と、`compose` した全文 `<run>/ledger/body-before.md` を作る。`VERIFY same <run>/ledger/start.json <run>/ledger/body-before.md <書き換える番号...>` で、書き換える項目が調査開始時から変わっていないかを確かめる。書き換える番号には、3. でまとめると決めた先の項目（対象外の項目でも）を含める。
    - 修正 Issue の下書きの `{{ID:<key>}}` を、3. で決めた ID に置き換える。`VERIFY check-issue <下書き> --fingerprint <ID> --sha "$VERIFY_SHA" --worktree <run>/worktree` を通す。
-   - 下書きの `{{ISSUE_URL:<key>}}` などを仮の値にして全項目を入れた本文を組み立て、`VERIFY check-body <run>/ledger/body-before.md <組み立てた本文> --targets <書き換える番号> [--new <新しい番号>] [--remove <統合して消す番号>]` と `VERIFY check-secrets <組み立てた本文> --worktree <run>/worktree` を通す。未完了の範囲から足す新しい問題には、最大の番号の次の `A` の番号を親が振る（`{{NUMBER:<key>}}` に入れる）。項目をまとめるときは、小さい番号を残し、残す項目の ID の箇条の末尾に `（統合: A07）` のように書く（[書式](../../../.agents/skills/security-audit-sync-issues/references/issue-templates.md) の「項目と番号」）。
+   - 下書きの `{{ISSUE_URL:<key>}}` などを仮の値にして全項目を入れた全文を組み立て、`VERIFY check-body <run>/ledger/body-before.md <組み立てた本文> --targets <書き換える番号> [--new <新しい番号>] [--remove <統合して消す番号>]` と `VERIFY check-secrets <組み立てた全文> --worktree <run>/worktree` を通し、`VERIFY split <組み立てた全文> <run>/ledger/split-trial --body <run>/ledger/raw-before.md --comments <run>/ledger/comments-before.json` が上限に収まる（終了コード 0）ことを確かめる。未完了の範囲から足す新しい問題には、最大の番号の次の `A` の番号を親が振る（`{{NUMBER:<key>}}` に入れる）。項目をまとめるときは、小さい番号を残し、残す項目の ID の箇条の末尾に `（統合: A07）` のように書く（[書式](../../../.agents/skills/security-audit-sync-issues/references/issue-templates.md) の「項目と番号」）。
 2. 確定の問題ごとに修正 Issue を作る。
    - `write-log.jsonl` に、同じ項目・同じ問題についてこの実行で作った Issue があれば、作らずにその URL を使い、済んでいない操作（ラベル、サブ Issue）だけを行う。
    - なければ、作る直前に全ページを取り直し、同じ fingerprint・同じ根本原因の修正 Issue を開閉を問わず探す。見つかれば作らずに報告に回す。
    - 下書きの 1 行目の `# ` のあとをタイトル、残りを本文にして作る。ラベル `agent:security-audit` を付け、`agent:autofix` は付ける直前に Issue を読み直して [自動修正できるか確かめる](../../../.agents/skills/security-audit-sync-issues/references/issue-sync.md#自動修正できるか確かめる) の条件を満たすときだけ付ける。[ラベル・サブ Issue と反映状況を記録する](../../../.agents/skills/security-audit-sync-issues/references/issue-sync.md#7-ラベルサブ-issue-と反映状況を記録する) の確かめ方で、集約 Issue のサブ Issue にする。
 3. 集約 Issue を書く。
-   - 編集の直前に本文を取り直し、`body-before.md` と違えば書かずに 1. からやり直す（作った修正 Issue は 2. のとおり使い回す）。
-   - `{{ISSUE_URL:<key>}}`・`{{REFLECTION:<key>}}` を実際の値にし、全項目の移動・件数・冒頭の件数の行のあとの `**<日付> 追記（手動）**:` の 1 行（何をしたか）を入れた本文を `<run>/ledger/body-after.md` に書く。一覧表と詳細は、その集約 Issue の今の列と箇条と並び順に合わせる。区分が空になったら一覧表と詳細の代わりに `0件。` と書く。
-   - `VERIFY check-body` と `VERIFY check-secrets` を通したら、1 回の編集で書く。書いたあとで取り直し、`body-after.md` と一致することを確かめる。
-- 途中で止まったら、同じ実行フォルダで続きから始められる。`bash "${CLAUDE_SKILL_DIR}/scripts/prepare.sh" --resume <run>` で作業ツリーを作り直し、`write-log.jsonl` の予定と実際の状態（同じ fingerprint・`source-sha` の Issue があるか、集約 Issue の本文が `body-after.md` と同じか）を照らして、済んだ操作を飛ばす。`done` でない項目は最初から調べ直す。
+   - `VERIFY lock <run> <集約 Issue の URL>` で書き込みの順番を取る。`locked <実行フォルダ> <時刻>` が出たら、ほかの実行が書いている。1 分ずつ待って取り直す（30 分を過ぎた lock は引き継がれる）。lock は書き終えたら、または書くのをやめたら `VERIFY unlock <run> <集約 Issue の URL>` で外す。
+   - lock を取ったら本文とコメントを取り直して `compose` し、`body-before.md` と違えば書かずに lock を外して 1. からやり直す（作った修正 Issue は 2. のとおり使い回す）。
+   - `{{ISSUE_URL:<key>}}`・`{{REFLECTION:<key>}}` を実際の値にし、全項目の移動・件数・冒頭の件数の行のあとの `**<日付> 追記（手動）**:` の 1 行（何をしたか）を入れた全文を `<run>/ledger/body-after.md` に書く。一覧表と詳細は、その集約 Issue の今の列と箇条と並び順に合わせる。区分が空になったら一覧表と詳細の代わりに `0件。` と書く。`VERIFY check-body` と `VERIFY check-secrets` を通す。
+   - `VERIFY split <run>/ledger/body-after.md <run>/ledger/split --body <run>/ledger/raw-before.md --comments <run>/ledger/comments-before.json` で、本文（`split/body.md`）と詳細コメント（`split/details-*.md`）と計画（`split/plan.json`）を作り、`check-secrets` を各ファイルに通す。`mode single` なら本文だけを書く（今までと同じ）。
+   - `mode split` なら、計画の順に書く。`create` は `gh api --hostname <host> -X POST "repos/<owner>/<repo>/issues/<番号>/comments" -F body=@<file>` で作り、返った `html_url` を控える。`update` は `gh api --hostname <host> -X PATCH "repos/<owner>/<repo>/issues/comments/<comment_id>" -F body=@<file>`。`same` は書かない。`retire` は消さずに、計画の `file`（使っていないことを書いた 2 行）で PATCH する。作ったコメントの URL を `VERIFY fill <run>/ledger/split/body.md <run>/ledger/body-out.md --url <区分>:<部>=<URL> ...` で本文に入れ、`check-secrets` を通して、本文を 1 回の編集（`gh issue edit --body-file`）で書く。
+   - 書いたあとで本文とコメントを取り直して `compose` し、`body-after.md` と一致することを確かめてから lock を外す。
+- 途中で止まったら、同じ実行フォルダで続きから始められる。`bash "${CLAUDE_SKILL_DIR}/scripts/prepare.sh" --resume <run>` で作業ツリーを作り直し、`write-log.jsonl` の予定と実際の状態（同じ fingerprint・`source-sha` の Issue があるか、作った詳細コメントがあるか、集約 Issue の本文とコメントを `compose` した全文が `body-after.md` と同じか）を照らして、済んだ操作を飛ばす。`done` でない項目は最初から調べ直す。
 
 ## 5. 報告と片付け（親）
 
