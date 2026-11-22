@@ -212,7 +212,9 @@ Codex 用は `$スキル名`、Claude Code 用は `/スキル名` で呼ぶ。
 
 ## スキルの追加・変更
 
-作り方と変更時の確認は [AGENTS.md](AGENTS.md) にある。
+Issue と Pull Request は誰でも歓迎する（出し方は [CONTRIBUTING.md](CONTRIBUTING.md) にある）。\
+作り方と変更時の確認は [AGENTS.md](AGENTS.md) にある。\
+脆弱性は公開の Issue に書かず、[SECURITY.md](SECURITY.md) の方法で報告する。
 
 ## ライセンス
 

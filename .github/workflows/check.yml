@@ -1,0 +1,38 @@
+name: check
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+      - name: description の文字数と設定
+        run: scripts/check-descriptions.sh
+      - name: 空白の誤り
+        run: git diff --check "$(git hash-object -t tree /dev/null)" HEAD
+      - name: シェルスクリプトの構文
+        run: find . -path ./.git -prune -o -name '*.sh' -print0 | xargs -0 -n1 bash -n
+      - name: スクリプトのテスト
+        run: |
+          node --test .agents/skills/*/scripts/*.test.mjs .claude/skills/*/scripts/*.test.mjs
+          for t in .agents/skills/*/scripts/*.test.sh .claude/skills/*/scripts/*.test.sh; do
+            [[ -f "$t" ]] || continue
+            bash "$t"
+          done
