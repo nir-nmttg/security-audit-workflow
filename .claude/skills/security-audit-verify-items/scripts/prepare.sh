@@ -4,7 +4,8 @@
 #   prepare.sh --resume <実行フォルダ>           続きから始める実行フォルダの作業ツリーを、控えた SHA で作り直す
 # 出力: 「run <実行フォルダ>」「worktree <作業ツリー>」と、コピーした .env* の数（値は出さない）。
 # 実行フォルダは artifacts/security-audit-verify-items/<実行 ID>/ に作り、worktree/ items/ ledger/ issues/ refs/ を置く。
-# 新しく作るときは、同じ対象リポジトリのほかの実行フォルダの作業ツリーを消す（items/ ledger/ issues/ は残す）。
+# 同じ対象リポジトリのほかの実行の作業ツリーは消さない（同時に動いている実行の作業ツリーを消さないため）。作業ツリーは各実行の cleanup.sh で消す。
+# 作業ツリーが残っているほかの実行フォルダは「other_worktree <実行フォルダ>」として出す（止まった実行の片付けの目安）。
 # 終了コード 1 は用意できない状態（理由を標準エラーに出す）、3 は引数の誤り。
 set -euo pipefail
 
@@ -64,11 +65,12 @@ sha=$2
 [[ $sha =~ ^[0-9a-f]{40}([0-9a-f]{24})?$ ]] || usage
 git -C "$repo" cat-file -e "$sha^{commit}" 2>/dev/null || die "コミットがありません: $sha（先に git fetch してください）"
 
-# 同じ対象リポジトリのほかの実行フォルダの作業ツリーを片付ける
+# 同じ対象リポジトリで作業ツリーが残っているほかの実行フォルダを知らせる（消さない）
+others=()
 for old in "$root"/*/; do
   old=${old%/}
-  [[ -f $old/repo && $(cat "$old/repo") == "$repo" ]] || continue
-  remove_worktree "$old"
+  [[ -f $old/repo && $(cat "$old/repo") == "$repo" && -d $old/worktree ]] || continue
+  others+=("$old")
 done
 
 run="$root/$(date +%Y%m%d-%H%M%S)-$(od -An -N3 -tx1 /dev/urandom | tr -d ' \n')"
@@ -79,3 +81,4 @@ cp "$refs/issue-templates.md" "$refs/issue-sync.md" "$run/refs/" 2>/dev/null || 
 printf '%s\n' "$repo" >"$run/repo"
 printf '%s\n' "$sha" >"$run/sha"
 make_worktree "$run"
+for old in "${others[@]+"${others[@]}"}"; do echo "other_worktree $old"; done
