@@ -64,9 +64,9 @@ test("上限に収まり、まだ分けていない本文は分けない", () =>
 
 test("上限を超える全文は区分ごとに分け、部に分けても compose で元に戻る", () => {
   // 前準備
-  const text = full({ filler: "あ".repeat(200) });
+  const text = full({ filler: "あ".repeat(600) });
   // 実行
-  const r = split(text, text, [], 700);
+  const r = split(text, text, [], 1100);
   const { body, comments } = post(r);
   // 検証
   assert.equal(r.mode, "split");
@@ -77,25 +77,28 @@ test("上限を超える全文は区分ごとに分け、部に分けても comp
 
 test("一度分けた本文は、全文が小さくなっても分けたままにし、変わらないコメントは書かない", () => {
   // 前準備
-  const text = full({ filler: "あ".repeat(200) });
-  const first = post(split(text, text, [], 700));
+  const text = full({ filler: "あ".repeat(600) });
+  const first = post(split(text, text, [], 1100));
   // 実行
   const r = split(text, first.body, first.comments);
   // 検証
   assert.equal(r.mode, "split");
-  assert.ok(r.plan.some((p) => p.op === "update"));
-  const again = post(r);
+  // 中身の変わる部は新しく作り、前のコメントは本文を書き換えたあとに retire する
+  assert.ok(r.plan.some((p) => p.op === "create"));
+  assert.ok(r.plan.some((p) => p.op === "retire"));
+  assert.ok(r.plan.findIndex((p) => p.op === "retire") > r.plan.findLastIndex((p) => p.op !== "retire"));
+  const again = post(r, 100);
   const r2 = split(text, again.body, again.comments);
   assert.ok(r2.plan.every((p) => p.op === "same"));
 });
 
 test("区分が空になったら、その詳細コメントは消さずに使わないものにする", () => {
   // 前準備
-  const before = full();
-  const first = post(split(before, before, [], 520));
-  const after = full({ confirmed: [], needs: ["A02", "A03", "A01"] });
+  const before = full({ filler: "あ".repeat(300) });
+  const first = post(split(before, before, [], 1000));
+  const after = full({ confirmed: [], needs: ["A02", "A03", "A01"], filler: "あ".repeat(300) });
   // 実行
-  const r = split(after, first.body, first.comments, 520);
+  const r = split(after, first.body, first.comments, 1000);
   // 検証
   const retired = r.plan.find((p) => p.op === "retire");
   assert.equal(retired.section, "確定");
@@ -104,8 +107,8 @@ test("区分が空になったら、その詳細コメントは消さずに使�
 
 test("リンク先のコメントが別の集約 Issue のものなら構造の異常にする", () => {
   // 前準備
-  const text = full();
-  const { body, comments } = post(split(text, text, [], 520));
+  const text = full({ filler: "あ".repeat(300) });
+  const { body, comments } = post(split(text, text, [], 1000));
   comments[0].body = comments[0].body.replace("summary-id=audit-1", "summary-id=other");
   // 実行・検証
   assert.throws(() => compose(body, comments), StructureError);
@@ -113,10 +116,19 @@ test("リンク先のコメントが別の集約 Issue のものなら構造の�
 
 test("リンク先のコメントがなければ構造の異常にする", () => {
   // 前準備
-  const text = full();
-  const { body } = post(split(text, text, [], 520));
+  const text = full({ filler: "あ".repeat(300) });
+  const { body } = post(split(text, text, [], 1000));
   // 実行・検証
   assert.throws(() => compose(body, []), StructureError);
+});
+
+test("URL を入れたあとの本文が上限を超えるときは fill が検査に外れる", () => {
+  // 前準備
+  const text = full({ filler: "あ".repeat(600) });
+  const r = split(text, text, [], 1100);
+  const urls = Object.fromEntries(r.plan.map((p) => [`${p.section}:${p.part}`, `${BASE}1`]));
+  // 実行・検証
+  assert.throws(() => fill(r.body, urls, r.body.length), CheckError);
 });
 
 test("1 項目だけで上限を超えるときは検査に外れる", () => {

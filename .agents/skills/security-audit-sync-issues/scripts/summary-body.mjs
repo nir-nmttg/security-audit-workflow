@@ -6,7 +6,7 @@
 //   extract <Issue の JSON> <出力>                 `gh api repos/<owner>/<repo>/issues/<番号>` の出力から本文をそのまま書き出す（--jq は末尾に改行を足すため）
 //   compose <本文> <コメントの JSON> <出力>        本文に、リンクした詳細コメントの中身を戻した全文を書き出す
 //   split <全文> <出力フォルダ> --body <今の本文> --comments <コメントの JSON> [--max 60000]
-//                                                 全文を本文と詳細コメントに分け、書き込みの計画（plan.json）を出す
+//                                                 全文を本文と詳細コメントに分け、書き込みの計画（plan.json。create・same のあとに本文、retire の順に書く）を出す
 //   fill <本文> <出力> --url <区分>:<部>=<URL> ...  split が残した新しいコメントの URL の仮置きを埋める
 // コメントの JSON は `gh api --paginate --slurp "repos/<owner>/<repo>/issues/<番号>/comments?per_page=100"` の出力（配列の配列でもよい）。
 // 終了コード 1 は上限などの検査に外れた、2 は本文・コメントの構造の異常、3 は引数の誤り。
@@ -14,6 +14,8 @@ import fs from "node:fs";
 import path from "node:path";
 
 export const MAX_CHARS = 60000;
+// 仮置きを埋めるコメントの URL の長さとして見込む文字数（https://github.com/<owner>/<repo>/issues/<番号>#issuecomment-<ID> に余裕を持たせる）
+const URL_RESERVE = 200;
 export const SECTIONS = ["確定", "要検証", "未検証", "棄却", "未完了の工程・範囲"];
 // 人が書いた「詳細: 」で始まる文と見分けるため、リンクか仮置きで始まる行だけを詳細へのリンクとみなす
 const LINK_LINE = /^詳細: \[[^\]]+\]\((https?:\/\/\S+#issuecomment-\d+|\{\{DETAILS_URL:[^}]+\}\})\)/;
@@ -169,6 +171,7 @@ function chunk(summaryId, section, detailLines, max) {
 }
 
 // 全文を本文と詳細コメントに分ける。今の本文がまだ分けていない形で、全文が上限に収まるなら、分けずに全文を本文にする。
+// 計画は書く順に並ぶ: create（新しいコメント）→ 本文の書き換え → retire。リンク中のコメントは書き換えない。
 export function split(fullText, currentBody, rawComments, max = MAX_CHARS) {
   const full = lines(fullText);
   const cur = lines(currentBody);
@@ -183,42 +186,56 @@ export function split(fullText, currentBody, rawComments, max = MAX_CHARS) {
   const out = [...full];
   const files = [];
   const plan = [];
+  const retire = [];
   for (const s of [...sections].reverse()) {
     if (s.links.length) broken(`details_link_in_full:${s.name}`);
     const existing = curSections.get(s.name)?.links.length ? linksOf(cur[curSections.get(s.name).links[0]]) : [];
     const parts = s.first >= 0 ? chunk(summaryId, s.name, full.slice(s.first, s.last + 1), max) : [];
+    const sectionFiles = [];
+    const sectionPlan = [];
     const urls = parts.map((p, k) => {
       const text = commentText(summaryId, s.name, k + 1, parts.length, p);
       const old = existing[k];
       const was = old && comments.get(old.id);
-      const op = !old ? "create" : was && was.body.replace(/\r\n/g, "\n") === text ? "same" : "update";
-      files.unshift({ section: s.name, part: k + 1, text });
-      plan.unshift({ op, section: s.name, part: k + 1, comment_id: old?.id ?? null, url: old?.url ?? null });
-      return old ? old.url : `{{DETAILS_URL:${s.name}:${k + 1}}}`;
+      sectionFiles.push({ section: s.name, part: k + 1, text });
+      if (old && was && was.body.replace(/\r\n/g, "\n") === text) {
+        sectionPlan.push({ op: "same", section: s.name, part: k + 1, comment_id: old.id, url: old.url });
+        return old.url;
+      }
+      // 中身の変わる部は、リンク中のコメントを書き換えずに新しく作る。本文を書き換えるまで、今の本文とコメントの組がそのまま読めるようにするため
+      if (old) retire.push({ op: "retire", section: s.name, part: null, comment_id: old.id, url: old.url });
+      sectionPlan.push({ op: "create", section: s.name, part: k + 1, comment_id: null, url: null });
+      return `{{DETAILS_URL:${s.name}:${k + 1}}}`;
     });
+    files.unshift(...sectionFiles);
+    plan.unshift(...sectionPlan);
     // 使わなくなった詳細コメントは消さずに、使っていないことを書いて残す
-    for (const old of existing.slice(parts.length)) plan.unshift({ op: "retire", section: s.name, part: null, comment_id: old.id, url: old.url });
+    for (const old of existing.slice(parts.length)) retire.push({ op: "retire", section: s.name, part: null, comment_id: old.id, url: old.url });
     if (parts.length) {
       const label = (k) => (parts.length > 1 ? `${s.name}の詳細 ${k + 1}` : `${s.name}の詳細`);
       out.splice(s.first, s.last - s.first + 1, `詳細: ${urls.map((u, k) => `[${label(k)}](${u})`).join("・")}`);
     }
   }
   const body = out.join("\n");
-  if (chars(body) > max) throw new CheckError(`too_long_body:${chars(body)}`);
-  return { mode: "split", body, comments: files, plan };
+  // 仮置きは fill で URL になるので、URL の長さの分を見込んで測る
+  const reserved = chars(body.replace(PLACEHOLDER, "x".repeat(URL_RESERVE)));
+  if (reserved > max) throw new CheckError(`too_long_body:${reserved}`);
+  // 書く順は、新しいコメントを作る → 本文を書き換える → 使わなくなったコメントを retire する
+  return { mode: "split", body, comments: files, plan: [...plan, ...retire.reverse()] };
 }
 
 export function retiredText(summaryId) {
   return [`<!-- security-audit:details-retired summary-id=${summaryId} -->`, "この詳細コメントは使っていない（集約 Issue の本文からリンクしていない）。"].join("\n");
 }
 
-export function fill(bodyText, urls) {
+export function fill(bodyText, urls, max = MAX_CHARS) {
   const filled = bodyText.replace(PLACEHOLDER, (m, section, part) => {
     const u = urls[`${section}:${part}`];
     if (!u) fail(`URL がない: ${section}:${part}`);
     if (!/^https?:\/\/\S+#issuecomment-\d+$/.test(u)) fail(`コメントの URL ではない: ${u}`);
     return u;
   });
+  if (chars(filled) > max) throw new CheckError(`too_long_body:${chars(filled)}`);
   return filled;
 }
 
@@ -297,15 +314,15 @@ export const COMMANDS = {
     return summary.join("\n");
   },
   fill: (args) => {
-    const o = options(args, [], ["url"]);
-    if (o._.length !== 2) fail("使い方: fill <本文> <出力> --url <区分>:<部>=<URL> ...");
+    const o = options(args, ["max"], ["url"]);
+    if (o._.length !== 2) fail("使い方: fill <本文> <出力> --url <区分>:<部>=<URL> ... [--max 60000]");
     const urls = {};
     for (const u of o.url ?? []) {
       const m = /^(.+:\d+)=(.+)$/.exec(u);
       if (!m) fail(`--url は <区分>:<部>=<URL> の形で指定してください: ${u}`);
       urls[m[1]] = m[2];
     }
-    fs.writeFileSync(o._[1], fill(readText(o._[0]), urls));
+    fs.writeFileSync(o._[1], fill(readText(o._[0]), urls, o.max ? Number(o.max) : MAX_CHARS));
     return "ok";
   },
 };

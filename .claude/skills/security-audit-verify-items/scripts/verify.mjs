@@ -408,7 +408,8 @@ function lockDir(run, url) {
   if (!fs.existsSync(path.join(real, "repo"))) fail(`このスキルの実行フォルダではありません: ${run}`);
   const m = /^https?:\/\/([^/]+)\/([^/]+)\/([^/]+)\/issues\/(\d+)\/?$/.exec(url);
   if (!m) fail(`集約 Issue の URL を https://<host>/<owner>/<repo>/issues/<番号> の形で指定してください: ${url}`);
-  return { run: real, dir: path.join(path.dirname(real), ".locks", m.slice(1).join("_")) };
+  // GitHub のホスト・owner・リポジトリ名は大文字と小文字を区別しないので、そろえてから鍵にする
+  return { run: real, dir: path.join(path.dirname(real), ".locks", m.slice(1).join("_").toLowerCase()) };
 }
 
 function readOwner(dir) {
@@ -419,25 +420,54 @@ function readOwner(dir) {
   }
 }
 
-export function lock(run, url, now = Date.now()) {
+// owner.json は一時ファイルに書いてから置き換え、書きかけを読まないようにする
+function writeOwner(dir, real, now) {
+  const tmp = path.join(dir, `.owner-${process.pid}-${Math.random().toString(16).slice(2)}`);
+  fs.writeFileSync(tmp, `${JSON.stringify({ run: real, at: new Date(now).toISOString() })}\n`);
+  fs.renameSync(tmp, path.join(dir, "owner.json"));
+}
+
+// 持ち主の実行は、書き込みの区切りごとに lock を呼び直して時刻を更新する（30 分止まった lock だけが引き継がれる）
+export function lock(run, url, now = Date.now(), retried = false) {
   const { run: real, dir } = lockDir(run, url);
   fs.mkdirSync(path.dirname(dir), { recursive: true });
-  const take = (note) => {
-    fs.writeFileSync(path.join(dir, "owner.json"), `${JSON.stringify({ run: real, at: new Date(now).toISOString() })}\n`);
-    return note;
-  };
   try {
     fs.mkdirSync(dir);
-    return take("ok");
+    writeOwner(dir, real, now);
+    return "ok";
   } catch (error) {
     if (error.code !== "EEXIST") throw error;
   }
   const owner = readOwner(dir);
-  if (owner?.run === real) return take("ok");
-  const at = Date.parse(owner?.at ?? "");
-  // owner.json を書く前の一瞬は読めないので、作られたばかりのものは持ち主がいるとみなす
-  const since = Number.isNaN(at) ? fs.statSync(dir).mtimeMs : at;
-  if (now - since > LOCK_STALE_MS) return take(`ok taken_over:${owner?.run ?? "unknown"}`);
+  if (owner?.run === real) {
+    writeOwner(dir, real, now);
+    return "ok";
+  }
+  let since = Date.parse(owner?.at ?? "");
+  if (Number.isNaN(since)) {
+    // owner.json を置く前の一瞬は読めない。フォルダの時刻で見て、作られたばかりなら持ち主がいるとみなす
+    try {
+      since = fs.statSync(dir).mtimeMs;
+    } catch (error) {
+      if (error.code === "ENOENT" && !retried) return lock(run, url, now, true);
+      throw error;
+    }
+  }
+  if (now - since > LOCK_STALE_MS) {
+    // 古い lock は名前を変えてから取り直す。名前の変更は 1 つの実行だけが成功するので、2 つが同時に引き継ぐことはない
+    const stale = `${dir}.stale-${process.pid}-${Math.random().toString(16).slice(2)}`;
+    try {
+      fs.renameSync(dir, stale);
+    } catch (error) {
+      if (error.code === "ENOENT" && !retried) return lock(run, url, now, true);
+      if (error.code !== "ENOENT") throw error;
+    }
+    if (fs.existsSync(stale)) fs.rmSync(stale, { recursive: true, force: true });
+    if (!retried) {
+      const r = lock(run, url, now, true);
+      return r === "ok" ? `ok taken_over:${owner?.run ?? "unknown"}` : r;
+    }
+  }
   process.exitCode = 1;
   return `locked ${owner?.run ?? "unknown"} ${owner?.at ?? ""}`.trim();
 }
