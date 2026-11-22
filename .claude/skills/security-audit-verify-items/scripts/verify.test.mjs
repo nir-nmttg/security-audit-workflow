@@ -164,6 +164,31 @@ test("verify.mjs から compose と split を呼べ、上限を超える全文�
   assert.equal(fs.readFileSync(path.join(dir, "back.md"), "utf8"), full);
 });
 
+test("split は --body と --comments を省くと、新しく作る集約 Issue として分ける", () => {
+  // 前準備
+  const full = body({ needs: ["A02", "A03"], extra: { A02: [`- **概要2**: ${"あ".repeat(1200)}`] } });
+  const file = tmp("full.md", full);
+  const dir = path.dirname(file);
+  const comments = path.join(dir, "c.json");
+  fs.writeFileSync(comments, "[]");
+  // 実行
+  const created = run(["split", file, path.join(dir, "new"), "--max", "1600"]);
+  const given = run(["split", file, path.join(dir, "given"), "--body", file, "--comments", comments, "--max", "1600"]);
+  const half = run(["split", file, path.join(dir, "half"), "--body", file]);
+  // 検証
+  assert.equal(created.code, 0, created.out + created.err);
+  assert.equal(created.out, given.out);
+  assert.match(created.out, /^mode split\n/);
+  assert.equal(fs.readFileSync(path.join(dir, "new", "body.md"), "utf8"), fs.readFileSync(path.join(dir, "given", "body.md"), "utf8"));
+  assert.equal(half.code, 3);
+});
+
+test("split と fill は --max に正の整数でない値を受け付けない", () => {
+  const file = tmp("full.md", body({ needs: ["A02"] }));
+  assert.equal(run(["split", file, path.join(path.dirname(file), "out"), "--max", "abc"]).code, 3);
+  assert.equal(run(["fill", file, path.join(path.dirname(file), "out.md"), "--max", "abc"]).code, 3);
+});
+
 test("split は本文だけで上限を超えるとき終了コード 1 で止める", () => {
   const full = body({ needs: ["A02"] });
   const file = tmp("full.md", full);
@@ -227,6 +252,59 @@ test("古い lock を引き継いだあとは、ほかの実行は引き継げ�
   // 検証
   assert.match(first, /^ok taken_over:/);
   assert.match(second, /^locked /);
+});
+
+test("lock を置く直前に別の実行が置いたら、置かずに locked を返す", (t) => {
+  // 前準備
+  const { a, b } = lockRun();
+  const url = "https://github.com/o/r/issues/1";
+  const rename = fs.renameSync;
+  let bResult;
+  t.mock.method(fs, "renameSync", (from, to) => {
+    if (bResult === undefined && from.includes(".new-") && to.endsWith("github.com_o_r_1")) {
+      fs.renameSync.mock.restore();
+      bResult = lock(b, url);
+    }
+    return rename(from, to);
+  });
+  // 実行
+  const aResult = lock(a, url);
+  process.exitCode = 0;
+  // 検証
+  assert.equal(bResult, "ok");
+  assert.match(aResult, new RegExp(`^locked ${fs.realpathSync(b)} `));
+  assert.deepEqual(fs.readdirSync(path.join(fs.realpathSync(path.dirname(a)), ".locks")), ["github.com_o_r_1"]);
+});
+
+test("古い lock を読んでから名前を変えるまでに別の実行が引き継いだら、その lock を奪わない", (t) => {
+  // 前準備
+  const { a, b } = lockRun();
+  const c = path.join(path.dirname(a), "c");
+  fs.mkdirSync(c);
+  fs.writeFileSync(path.join(c, "repo"), "/x\n");
+  const url = "https://github.com/o/r/issues/1";
+  lock(a, url, Date.now() - 31 * 60 * 1000);
+  // b が古い lock の名前を変える直前に、c が引き継ぎを済ませる
+  const rename = fs.renameSync;
+  let cResult;
+  t.mock.method(fs, "renameSync", (from, to) => {
+    if (cResult === undefined && to.includes(".stale-")) {
+      fs.renameSync.mock.restore();
+      cResult = lock(c, url);
+    }
+    return rename(from, to);
+  });
+  // 実行
+  const bResult = lock(b, url);
+  process.exitCode = 0;
+  // 検証
+  assert.match(cResult, /^ok taken_over:/);
+  assert.match(bResult, new RegExp(`^locked ${fs.realpathSync(c)} `));
+  assert.equal(lock(c, url), "ok");
+  assert.deepEqual(
+    fs.readdirSync(path.join(fs.realpathSync(path.dirname(a)), ".locks")).filter((n) => n.includes(".stale-")),
+    [],
+  );
 });
 
 test("check-body は冒頭の件数の桁が変わっても通す", () => {

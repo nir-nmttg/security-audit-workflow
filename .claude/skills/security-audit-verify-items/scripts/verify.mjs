@@ -431,43 +431,70 @@ function writeOwner(dir, real, now) {
 export function lock(run, url, now = Date.now(), retried = false) {
   const { run: real, dir } = lockDir(run, url);
   fs.mkdirSync(path.dirname(dir), { recursive: true });
-  try {
-    fs.mkdirSync(dir);
-    writeOwner(dir, real, now);
-    return "ok";
-  } catch (error) {
-    if (error.code !== "EEXIST") throw error;
-  }
+  if (createLock(dir, real, now)) return "ok";
   const owner = readOwner(dir);
   if (owner?.run === real) {
     writeOwner(dir, real, now);
     return "ok";
   }
-  let since = Date.parse(owner?.at ?? "");
-  if (Number.isNaN(since)) {
-    // owner.json を置く前の一瞬は読めない。フォルダの時刻で見て、作られたばかりなら持ち主がいるとみなす
-    try {
-      since = fs.statSync(dir).mtimeMs;
-    } catch (error) {
-      if (error.code === "ENOENT" && !retried) return lock(run, url, now, true);
-      throw error;
-    }
+  let since;
+  try {
+    since = lockTime(dir, owner);
+  } catch (error) {
+    // 消えた直後なら取り直す（続けて消えるときは、ほかの実行が取り合っているので待つ）
+    if (error.code === "ENOENT") return retried ? locked(owner) : lock(run, url, now, true);
+    throw error;
   }
-  if (now - since > LOCK_STALE_MS) {
-    // 古い lock は名前を変えてから取り直す。名前の変更は 1 つの実行だけが成功するので、2 つが同時に引き継ぐことはない
-    const stale = `${dir}.stale-${process.pid}-${Math.random().toString(16).slice(2)}`;
-    try {
-      fs.renameSync(dir, stale);
-    } catch (error) {
-      if (error.code === "ENOENT" && !retried) return lock(run, url, now, true);
-      if (error.code !== "ENOENT") throw error;
-    }
-    if (fs.existsSync(stale)) fs.rmSync(stale, { recursive: true, force: true });
-    if (!retried) {
-      const r = lock(run, url, now, true);
-      return r === "ok" ? `ok taken_over:${owner?.run ?? "unknown"}` : r;
-    }
+  if (now - since <= LOCK_STALE_MS) return locked(owner);
+  // 古い lock は名前を変えてから取り直す。名前の変更は 1 つの実行だけが成功する
+  const stale = `${dir}.stale-${process.pid}-${Math.random().toString(16).slice(2)}`;
+  try {
+    fs.renameSync(dir, stale);
+  } catch (error) {
+    // 消えた直後なら取り直す（続けて消えるときは、ほかの実行が取り合っているので待つ）
+    if (error.code === "ENOENT") return retried ? locked(owner) : lock(run, url, now, true);
+    throw error;
   }
+  // 古いと判断してから名前を変えるまでに、別の実行が引き継いで新しい lock を作っていることがある。
+  // 名前を変えた lock を見直し、古くなければ元に戻して、持ち主がいるものとして扱う
+  const moved = readOwner(stale);
+  if (now - lockTime(stale, moved) <= LOCK_STALE_MS) {
+    try {
+      fs.renameSync(stale, dir);
+    } catch {
+      // 戻せなければ（さらに別の実行が lock を作った）、その持ち主は次の lock の呼び直しで止まる
+      fs.rmSync(stale, { recursive: true, force: true });
+    }
+    return locked(moved);
+  }
+  fs.rmSync(stale, { recursive: true, force: true });
+  if (!createLock(dir, real, now)) return locked(readOwner(dir));
+  return `ok taken_over:${moved?.run ?? "unknown"}`;
+}
+
+// lock は一時フォルダに owner.json を置いてから名前を変えて置く（持ち主の書かれていない lock を作らないため）。
+// 名前の変更は、owner.json のある lock がすでにあれば失敗する
+function createLock(dir, real, now) {
+  const tmp = `${dir}.new-${process.pid}-${Math.random().toString(16).slice(2)}`;
+  fs.mkdirSync(tmp);
+  try {
+    writeOwner(tmp, real, now);
+    fs.renameSync(tmp, dir);
+    return true;
+  } catch (error) {
+    fs.rmSync(tmp, { recursive: true, force: true });
+    if (error.code === "ENOTEMPTY" || error.code === "EEXIST") return false;
+    throw error;
+  }
+}
+
+// lock を最後に更新した時刻。owner.json が読めない（壊れている）ときはフォルダの時刻で見る
+function lockTime(dir, owner) {
+  const at = Date.parse(owner?.at ?? "");
+  return Number.isNaN(at) ? fs.statSync(dir).mtimeMs : at;
+}
+
+function locked(owner) {
   process.exitCode = 1;
   return `locked ${owner?.run ?? "unknown"} ${owner?.at ?? ""}`.trim();
 }
@@ -476,10 +503,7 @@ export function unlock(run, url) {
   const { run: real, dir } = lockDir(run, url);
   if (!fs.existsSync(dir)) return "ok not_locked";
   const owner = readOwner(dir);
-  if (owner?.run !== real) {
-    process.exitCode = 1;
-    return `locked ${owner?.run ?? "unknown"}`;
-  }
+  if (owner?.run !== real) return locked(owner);
   fs.rmSync(dir, { recursive: true, force: true });
   return "ok";
 }
