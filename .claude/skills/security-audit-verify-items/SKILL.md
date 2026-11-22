@@ -116,7 +116,7 @@ Codex の security-audit-sync-issues が作った集約 Issue（`[yyyy-mm-dd] �
      - 作ったコメントの URL を `VERIFY fill <run>/ledger/split/body.md <run>/ledger/body-out.md --url <区分>:<部>=<URL> ...` で本文に入れ（上限も確かめ直す）、`check-secrets` を通して、本文を 1 回の編集（`gh issue edit --body-file`）で書く。
      - 本文を書いたあとで、`retire` を計画の `file` で `gh api --hostname <host> -X PATCH "repos/<owner>/<repo>/issues/comments/<comment_id>" -F body=@<file>` する（消さずに、使っていないことを書く）。
    - 書いたあとで本文とコメントを取り直して `compose` し、`body-after.md` と一致することを確かめてから lock を外す。
-- 途中で止まったら、同じ実行フォルダで続きから始められる。`bash "${CLAUDE_SKILL_DIR}/scripts/prepare.sh" --resume <run>` で作業ツリーを作り直し、`write-log.jsonl` の予定と実際の状態（同じ fingerprint・`source-sha` の Issue があるか、作った詳細コメントがあるか、集約 Issue の本文とコメントを `compose` した全文が `body-after.md` と同じか）を照らして、済んだ操作を飛ばす。`done` でない項目は最初から調べ直す。
+- 途中で止まったら、同じ実行フォルダで続きから始められる。`bash "${CLAUDE_SKILL_DIR}/scripts/prepare.sh" --resume <run>` で作業ツリーを作り直し、`write-log.jsonl` の予定と実際の状態（同じ fingerprint・`source-sha` の Issue があるか、集約 Issue の本文とコメントを `compose` した全文が `body-after.md` と同じか）を照らして、済んだ操作を飛ばす。本文を書く前に止まったときに作った詳細コメントは、本文からリンクされないので詳細としては読まれない。消さずに残し、4. の 3. は新しいコメントを作り直す。`done` でない項目は最初から調べ直す。
 
 ## 5. 報告と片付け（親）
 

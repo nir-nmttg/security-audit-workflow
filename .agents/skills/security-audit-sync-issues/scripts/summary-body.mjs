@@ -5,9 +5,11 @@
 // 番号・件数・項目の検査は全文に対して行える。
 //   extract <Issue の JSON> <出力>                 `gh api repos/<owner>/<repo>/issues/<番号>` の出力から本文をそのまま書き出す（--jq は末尾に改行を足すため）
 //   compose <本文> <コメントの JSON> <出力>        本文に、リンクした詳細コメントの中身を戻した全文を書き出す
-//   split <全文> <出力フォルダ> --body <今の本文> --comments <コメントの JSON> [--max 60000]
+//   split <全文> <出力フォルダ> [--body <今の本文> --comments <コメントの JSON>] [--max 60000]
 //                                                 全文を本文と詳細コメントに分け、書き込みの計画（plan.json。create・same のあとに本文、retire の順に書く）を出す
-//   fill <本文> <出力> --url <区分>:<部>=<URL> ...  split が残した新しいコメントの URL の仮置きを埋める
+//                                                 集約 Issue を新しく作るときは --body と --comments を省く
+//   fill <本文> <出力> --url <区分>:<部>=<URL> ... [--max 60000]
+//                                                 split が残した新しいコメントの URL の仮置きを埋める
 // コメントの JSON は `gh api --paginate --slurp "repos/<owner>/<repo>/issues/<番号>/comments?per_page=100"` の出力（配列の配列でもよい）。
 // 終了コード 1 は上限などの検査に外れた、2 は本文・コメントの構造の異常、3 は引数の誤り。
 import fs from "node:fs";
@@ -273,6 +275,13 @@ function options(args, names, multi = []) {
   return out;
 }
 
+function maxOf(value) {
+  if (value === undefined) return MAX_CHARS;
+  const max = Number(value);
+  if (!Number.isInteger(max) || max <= 0) fail("--max は正の整数で指定してください");
+  return max;
+}
+
 export const COMMANDS = {
   extract: (args) => {
     if (args.length !== 2) fail("使い方: extract <Issue の JSON> <出力>");
@@ -289,10 +298,10 @@ export const COMMANDS = {
   },
   split: (args) => {
     const o = options(args, ["body", "comments", "max"]);
-    if (o._.length !== 2 || !o.body || !o.comments) fail("使い方: split <全文> <出力フォルダ> --body <今の本文> --comments <コメントの JSON> [--max 60000]");
-    const max = o.max ? Number(o.max) : MAX_CHARS;
-    if (!Number.isInteger(max) || max <= 0) fail("--max は正の整数で指定してください");
-    const r = split(readText(o._[0]), readText(o.body), readJson(o.comments), max);
+    if (o._.length !== 2 || (o.body === undefined) !== (o.comments === undefined)) fail("使い方: split <全文> <出力フォルダ> [--body <今の本文> --comments <コメントの JSON>] [--max 60000]");
+    const fullText = readText(o._[0]);
+    // 新しく作るとき（--body・--comments を省いたとき）は、今の本文を全文、コメントをなしとして分ける
+    const r = o.body !== undefined ? split(fullText, readText(o.body), readJson(o.comments), maxOf(o.max)) : split(fullText, fullText, [], maxOf(o.max));
     const dir = o._[1];
     fs.mkdirSync(dir, { recursive: true });
     fs.writeFileSync(path.join(dir, "body.md"), r.body);
@@ -322,7 +331,7 @@ export const COMMANDS = {
       if (!m) fail(`--url は <区分>:<部>=<URL> の形で指定してください: ${u}`);
       urls[m[1]] = m[2];
     }
-    fs.writeFileSync(o._[1], fill(readText(o._[0]), urls, o.max ? Number(o.max) : MAX_CHARS));
+    fs.writeFileSync(o._[1], fill(readText(o._[0]), urls, maxOf(o.max)));
     return "ok";
   },
 };
