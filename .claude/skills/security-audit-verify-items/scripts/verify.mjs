@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// security-audit-verify-items の定型の検査。親（Supervisor）が GitHub に書く前に使う。
+// security-audit-verify-items の定型の検査。親（このスキルを呼んだメインのセッション）が GitHub に書く前に使う。
 //   pick                                  標準入力の gh issue list の JSON から、最新の集約 Issue の番号を出す
 //   items <本文>                           項目ごとの区分・ID・全文と、番号を省いたときの対象を JSON で出す（調査開始時の控えに使う）
 //   same <控えの JSON> <本文> <番号...>      項目の全文が控えと同じかを番号ごとに出す（違えば終了コード 1）
