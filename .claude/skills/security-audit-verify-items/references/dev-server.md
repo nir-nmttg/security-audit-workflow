@@ -1,6 +1,6 @@
 # 開発サーバーと組み込みブラウザでの確認
 
-security-audit-verify-items の親が、準備の手順 6（接続先の確認）と、仲介の `browser`（開発サーバーの起動と画面での確認）で使う。開発サーバーは `prepare.sh` が作った作業ツリー（`<run>/worktree/`）で動かす。組み込みブラウザ（`mcp__Claude_Browser__*`）のツールの使い方・タブ・サイトの承認は、標準の `built-in-browser` スキルに従い、初めて使う前に読む。組み込みブラウザのツールがない（ToolSearch で `mcp__Claude_Browser__preview_start` などを読み込もうとしても見つからない）ときは、`browser` の項目に「画面では確かめられない」と返す。
+security-audit-verify-items の親が、準備の手順 6（接続先の確認）と、仲介の `browser`（開発サーバーの起動と画面での確認）で使う。開発サーバーは `prepare.sh` が作った作業ツリー（`<run>/worktree/`）で動かす。組み込みブラウザ（`mcp__Claude_Browser__*`）のツールの使い方・タブ・サイトの承認は、標準の `built-in-browser` スキルがあれば、初めて使う前に読んで従う（なくても、この文書の手順で進める）。組み込みブラウザのツールがない（ToolSearch で `mcp__Claude_Browser__preview_start` などを読み込もうとしても見つからない）ときは、`browser` の項目に「画面では確かめられない」と返す。
 
 ## 接続先と起動で起きることを確かめる（準備の手順 6）
 

@@ -432,7 +432,7 @@ export function main(argv) {
   return fn(args);
 }
 
-if (import.meta.url === `file://${process.argv[1]}` || process.argv[1]?.endsWith("/supervise.mjs")) {
+if (process.argv[1]?.endsWith("/supervise.mjs")) {
   try {
     process.stdout.write(`${main(process.argv.slice(2))}\n`);
   } catch (error) {

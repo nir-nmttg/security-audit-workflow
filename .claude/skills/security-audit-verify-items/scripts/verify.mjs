@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// security-audit-verify-items の定型の検査。親（Supervisor）が GitHub に書く前に使う。
+// security-audit-verify-items の定型の検査。親（このスキルを呼んだメインのセッション）が GitHub に書く前に使う。
 //   pick                                  標準入力の gh issue list の JSON から、最新の集約 Issue の番号を出す
 //   items <本文>                           項目ごとの区分・ID・全文と、番号を省いたときの対象を JSON で出す（調査開始時の控えに使う）
 //   same <控えの JSON> <本文> <番号...>      項目の全文が控えと同じかを番号ごとに出す（違えば終了コード 1）
@@ -19,7 +19,7 @@
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { COMMANDS as SUMMARY_COMMANDS, CheckError } from "../../../../.agents/skills/security-audit-sync-issues/scripts/summary-body.mjs";
+import { COMMANDS as SUMMARY_COMMANDS, CheckError, StructureError, UsageError, lines, readText } from "../../../../.agents/skills/security-audit-sync-issues/scripts/summary-body.mjs";
 
 // lock を持ったまま止まった実行があっても、この時間が過ぎたら引き継ぐ
 const LOCK_STALE_MS = 30 * 60 * 1000;
@@ -41,31 +41,12 @@ const TOKEN_PATTERNS = [
   /-----BEGIN [A-Z ]*PRIVATE KEY-----/,
 ];
 
-class UsageError extends Error {}
-class StructureError extends Error {}
-
 function fail(message) {
   throw new UsageError(message);
 }
 
 function broken(reason) {
   throw new StructureError(reason);
-}
-
-function chars(text) {
-  return [...text].length;
-}
-
-function lines(text) {
-  return text.replace(/\r\n/g, "\n").split("\n");
-}
-
-function readText(file) {
-  try {
-    return fs.readFileSync(file, "utf8");
-  } catch {
-    fail(`ファイルを読めません: ${file}`);
-  }
 }
 
 // 集約 Issue の本文を、区画の外・区画のマーカー・項目でない行・区分・項目（一覧表の行と詳細）に分ける。
@@ -157,33 +138,12 @@ export function parse(text) {
     const m = idLine ? /`([^`]+)`/.exec(idLine) : null;
     it.id = m ? m[1] : null;
   }
-  return { outside, auditMarkers, rest, incompleteNote, sections, items, chars: chars(text) };
+  return { outside, auditMarkers, rest, incompleteNote, sections, items };
 }
 
 function itemOf(items, num) {
   if (!items.has(num)) items.set(num, { rows: [], details: [] });
   return items.get(num);
-}
-
-function listArg(value) {
-  if (!value) return [];
-  const list = value.split(",").map((s) => s.trim()).filter(Boolean);
-  for (const n of list) if (!NUMBER.test(n)) fail(`番号は A03・U01 の形で指定してください: ${n}`);
-  return list;
-}
-
-function options(args, names) {
-  const out = { _: [] };
-  for (let i = 0; i < args.length; i++) {
-    const a = args[i];
-    if (a.startsWith("--")) {
-      const name = a.slice(2);
-      if (!names.includes(name)) fail(`知らないオプションです: ${a}`);
-      if (i + 1 >= args.length) fail(`${a} の値がありません`);
-      out[name] = args[++i];
-    } else out._.push(a);
-  }
-  return out;
 }
 
 function numberOf(num) {
@@ -508,6 +468,27 @@ export function unlock(run, url) {
   return "ok";
 }
 
+function listArg(value) {
+  if (!value) return [];
+  const list = value.split(",").map((s) => s.trim()).filter(Boolean);
+  for (const n of list) if (!NUMBER.test(n)) fail(`番号は A03・U01 の形で指定してください: ${n}`);
+  return list;
+}
+
+function options(args, names) {
+  const out = { _: [] };
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (a.startsWith("--")) {
+      const name = a.slice(2);
+      if (!names.includes(name)) fail(`知らないオプションです: ${a}`);
+      if (i + 1 >= args.length) fail(`${a} の値がありません`);
+      out[name] = args[++i];
+    } else out._.push(a);
+  }
+  return out;
+}
+
 const COMMANDS = {
   ...SUMMARY_COMMANDS,
   lock: (args) => {
@@ -581,8 +562,7 @@ if (process.argv[1]?.endsWith("/verify.mjs")) {
     const out = main(process.argv.slice(2));
     if (out) process.stdout.write(`${out}\n`);
   } catch (error) {
-    // summary-body.mjs の構造の異常も、名前で見分ける（クラスはモジュールごとに別）
-    if (error instanceof StructureError || error?.constructor?.name === "StructureError") {
+    if (error instanceof StructureError) {
       process.stdout.write(`${error.message}\n`);
       process.exit(2);
     }
@@ -590,8 +570,7 @@ if (process.argv[1]?.endsWith("/verify.mjs")) {
       process.stdout.write(`${error.message}\n`);
       process.exit(1);
     }
-    const usage = error instanceof UsageError || error?.constructor?.name === "UsageError";
-    process.stderr.write(`verify.mjs: ${usage ? error.message : "予期しないエラー"}\n`);
+    process.stderr.write(`verify.mjs: ${error instanceof UsageError ? error.message : "予期しないエラー"}\n`);
     process.exit(3);
   }
 }

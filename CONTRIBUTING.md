@@ -18,6 +18,7 @@ Issue と Pull Request は誰でも歓迎する。\
    ```bash
    scripts/check-descriptions.sh
    git diff --check "$(git hash-object -t tree /dev/null)" HEAD
+   git ls-files -z '*.sh' | xargs -0 -n1 bash -n
    node --test .agents/skills/*/scripts/*.test.mjs .claude/skills/*/scripts/*.test.mjs
    bash .claude/skills/security-audit-verify-items/scripts/scripts.test.sh
    ```
