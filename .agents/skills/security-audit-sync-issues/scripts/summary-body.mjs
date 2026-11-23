@@ -36,7 +36,7 @@ const fail = (message) => {
   throw new UsageError(message);
 };
 export const chars = (text) => [...text].length;
-const lines = (text) => text.replace(/\r\n/g, "\n").split("\n");
+export const lines = (text) => text.replace(/\r\n/g, "\n").split("\n");
 
 // 区画の中の区分ごとに、見出しの行・次の見出しの行・詳細の範囲（最初の <details> から最後の </details> まで）・詳細へのリンクの行を探す
 function sectionsOf(ls) {
@@ -241,7 +241,7 @@ export function fill(bodyText, urls, max = MAX_CHARS) {
   return filled;
 }
 
-function readText(file) {
+export function readText(file) {
   try {
     return fs.readFileSync(file, "utf8");
   } catch {

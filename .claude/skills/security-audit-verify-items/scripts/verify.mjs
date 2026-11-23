@@ -19,7 +19,7 @@
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { COMMANDS as SUMMARY_COMMANDS, CheckError, StructureError, UsageError } from "../../../../.agents/skills/security-audit-sync-issues/scripts/summary-body.mjs";
+import { COMMANDS as SUMMARY_COMMANDS, CheckError, StructureError, UsageError, lines, readText } from "../../../../.agents/skills/security-audit-sync-issues/scripts/summary-body.mjs";
 
 // lock を持ったまま止まった実行があっても、この時間が過ぎたら引き継ぐ
 const LOCK_STALE_MS = 30 * 60 * 1000;
@@ -47,22 +47,6 @@ function fail(message) {
 
 function broken(reason) {
   throw new StructureError(reason);
-}
-
-function chars(text) {
-  return [...text].length;
-}
-
-function lines(text) {
-  return text.replace(/\r\n/g, "\n").split("\n");
-}
-
-function readText(file) {
-  try {
-    return fs.readFileSync(file, "utf8");
-  } catch {
-    fail(`ファイルを読めません: ${file}`);
-  }
 }
 
 // 集約 Issue の本文を、区画の外・区画のマーカー・項目でない行・区分・項目（一覧表の行と詳細）に分ける。
@@ -154,7 +138,7 @@ export function parse(text) {
     const m = idLine ? /`([^`]+)`/.exec(idLine) : null;
     it.id = m ? m[1] : null;
   }
-  return { outside, auditMarkers, rest, incompleteNote, sections, items, chars: chars(text) };
+  return { outside, auditMarkers, rest, incompleteNote, sections, items };
 }
 
 function itemOf(items, num) {
