@@ -28,7 +28,6 @@ rows=()      # 結果の表の行
 missing=()   # 足りないもの（キー）
 fixes=()     # 対処方法の行
 formulas=()  # brew install で入れられるもの
-casks=()     # brew install --cask で入れられるもの
 
 # 結果を記録する: add <キー> <状態 ok|ng|warn> <項目> <詳細> <使うスキル> [対処方法]
 add() {
@@ -45,7 +44,7 @@ add() {
 
 # --- コマンド -----------------------------------------------------------------
 
-# check_cmd <コマンド> <使うスキル> <インストール方法> <Homebrew のパッケージ（cask は cask:名前）> [バージョンを出すコマンド...]
+# check_cmd <コマンド> <使うスキル> <インストール方法> <Homebrew のパッケージ> [バージョンを出すコマンド...]
 check_cmd() {
   local cmd=$1 used_by=$2 fix=$3 pkg=$4
   shift 4
@@ -55,10 +54,7 @@ check_cmd() {
     add "$cmd" ok "\`$cmd\`" "${v:-$(command -v "$cmd")}" "$used_by"
   else
     add "$cmd" ng "\`$cmd\`" "見つかりません" "$used_by" "$fix"
-    case $pkg in
-      cask:*) casks+=("${pkg#cask:}") ;;
-      *) formulas+=("$pkg") ;;
-    esac
+    formulas+=("$pkg")
   fi
 }
 
@@ -72,7 +68,7 @@ check_cmd node "$verify_items" "\`brew install node\`" node node --version
 
 # インストール方法は Homebrew 前提なので、足りないコマンドがあって Homebrew も無ければ先に入れてもらう
 need_brew=false
-if ((${#formulas[@]} + ${#casks[@]} > 0)) && ! has brew; then
+if ((${#formulas[@]} > 0)) && ! has brew; then
   need_brew=true
   rows+=("| ⚠️ | Homebrew | 見つかりません | インストールに使う |")
 fi
@@ -181,15 +177,9 @@ fi
 # Claude が了承を得て実行できるもの。&& でつないだ 1 行にし、途中で失敗したら止める。
 # Homebrew がなければインストールは出さない（先に入れてもらう）
 auto=() notes=()
-if ! $need_brew; then
-  if ((${#formulas[@]} > 0)); then
-    auto+=("brew install ${formulas[*]}")
-    notes+=("- \`brew install ${formulas[*]}\`: Homebrew で ${formulas[*]} を入れる")
-  fi
-  if ((${#casks[@]} > 0)); then
-    auto+=("brew install --cask ${casks[*]}")
-    notes+=("- \`brew install --cask ${casks[*]}\`: Homebrew で ${casks[*]} を入れる")
-  fi
+if ! $need_brew && ((${#formulas[@]} > 0)); then
+  auto+=("brew install ${formulas[*]}")
+  notes+=("- \`brew install ${formulas[*]}\`: Homebrew で ${formulas[*]} を入れる")
 fi
 for m in ${missing[@]+"${missing[@]}"}; do
   if [[ $m == agents-link || $m == verify-items-link ]] && $main_checkout; then

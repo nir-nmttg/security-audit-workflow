@@ -336,14 +336,14 @@ export const COMMANDS = {
   },
 };
 
-export function run(argv, commands = COMMANDS) {
+function run(argv) {
   const [cmd, ...args] = argv;
-  const fn = commands[cmd];
-  if (!fn) fail(`使い方: summary-body.mjs <${Object.keys(commands).join("|")}> [...]`);
+  const fn = COMMANDS[cmd];
+  if (!fn) fail(`使い方: summary-body.mjs <${Object.keys(COMMANDS).join("|")}> [...]`);
   return fn(args);
 }
 
-export function exitWith(error, name) {
+function exitWith(error) {
   if (error instanceof StructureError) {
     process.stdout.write(`${error.message}\n`);
     process.exit(2);
@@ -352,7 +352,7 @@ export function exitWith(error, name) {
     process.stdout.write(`${error.message}\n`);
     process.exit(1);
   }
-  process.stderr.write(`${name}: ${error instanceof UsageError ? error.message : `予期しないエラー: ${error?.message}`}\n`);
+  process.stderr.write(`summary-body.mjs: ${error instanceof UsageError ? error.message : `予期しないエラー: ${error?.message}`}\n`);
   process.exit(3);
 }
 
@@ -361,6 +361,6 @@ if (process.argv[1]?.endsWith("/summary-body.mjs")) {
     const out = run(process.argv.slice(2));
     if (out) process.stdout.write(out.endsWith("\n") ? out : `${out}\n`);
   } catch (error) {
-    exitWith(error, "summary-body.mjs");
+    exitWith(error);
   }
 }
