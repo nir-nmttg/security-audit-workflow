@@ -146,27 +146,6 @@ function itemOf(items, num) {
   return items.get(num);
 }
 
-function listArg(value) {
-  if (!value) return [];
-  const list = value.split(",").map((s) => s.trim()).filter(Boolean);
-  for (const n of list) if (!NUMBER.test(n)) fail(`番号は A03・U01 の形で指定してください: ${n}`);
-  return list;
-}
-
-function options(args, names) {
-  const out = { _: [] };
-  for (let i = 0; i < args.length; i++) {
-    const a = args[i];
-    if (a.startsWith("--")) {
-      const name = a.slice(2);
-      if (!names.includes(name)) fail(`知らないオプションです: ${a}`);
-      if (i + 1 >= args.length) fail(`${a} の値がありません`);
-      out[name] = args[++i];
-    } else out._.push(a);
-  }
-  return out;
-}
-
 function numberOf(num) {
   return Number(num.slice(1));
 }
@@ -487,6 +466,27 @@ export function unlock(run, url) {
   if (owner?.run !== real) return locked(owner);
   fs.rmSync(dir, { recursive: true, force: true });
   return "ok";
+}
+
+function listArg(value) {
+  if (!value) return [];
+  const list = value.split(",").map((s) => s.trim()).filter(Boolean);
+  for (const n of list) if (!NUMBER.test(n)) fail(`番号は A03・U01 の形で指定してください: ${n}`);
+  return list;
+}
+
+function options(args, names) {
+  const out = { _: [] };
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (a.startsWith("--")) {
+      const name = a.slice(2);
+      if (!names.includes(name)) fail(`知らないオプションです: ${a}`);
+      if (i + 1 >= args.length) fail(`${a} の値がありません`);
+      out[name] = args[++i];
+    } else out._.push(a);
+  }
+  return out;
 }
 
 const COMMANDS = {
