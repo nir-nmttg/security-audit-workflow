@@ -19,7 +19,7 @@
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { COMMANDS as SUMMARY_COMMANDS, CheckError } from "../../../../.agents/skills/security-audit-sync-issues/scripts/summary-body.mjs";
+import { COMMANDS as SUMMARY_COMMANDS, CheckError, StructureError, UsageError } from "../../../../.agents/skills/security-audit-sync-issues/scripts/summary-body.mjs";
 
 // lock を持ったまま止まった実行があっても、この時間が過ぎたら引き継ぐ
 const LOCK_STALE_MS = 30 * 60 * 1000;
@@ -40,9 +40,6 @@ const TOKEN_PATTERNS = [
   /xox[abposr]-[A-Za-z0-9-]{10,}/,
   /-----BEGIN [A-Z ]*PRIVATE KEY-----/,
 ];
-
-class UsageError extends Error {}
-class StructureError extends Error {}
 
 function fail(message) {
   throw new UsageError(message);
@@ -581,8 +578,7 @@ if (process.argv[1]?.endsWith("/verify.mjs")) {
     const out = main(process.argv.slice(2));
     if (out) process.stdout.write(`${out}\n`);
   } catch (error) {
-    // summary-body.mjs の構造の異常も、名前で見分ける（クラスはモジュールごとに別）
-    if (error instanceof StructureError || error?.constructor?.name === "StructureError") {
+    if (error instanceof StructureError) {
       process.stdout.write(`${error.message}\n`);
       process.exit(2);
     }
@@ -590,8 +586,7 @@ if (process.argv[1]?.endsWith("/verify.mjs")) {
       process.stdout.write(`${error.message}\n`);
       process.exit(1);
     }
-    const usage = error instanceof UsageError || error?.constructor?.name === "UsageError";
-    process.stderr.write(`verify.mjs: ${usage ? error.message : "予期しないエラー"}\n`);
+    process.stderr.write(`verify.mjs: ${error instanceof UsageError ? error.message : "予期しないエラー"}\n`);
     process.exit(3);
   }
 }

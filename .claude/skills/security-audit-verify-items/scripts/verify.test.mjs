@@ -185,8 +185,19 @@ test("split は --body と --comments を省くと、新しく作る集約 Issue
 
 test("split と fill は --max に正の整数でない値を受け付けない", () => {
   const file = tmp("full.md", body({ needs: ["A02"] }));
-  assert.equal(run(["split", file, path.join(path.dirname(file), "out"), "--max", "abc"]).code, 3);
+  const split = run(["split", file, path.join(path.dirname(file), "out"), "--max", "abc"]);
+  assert.equal(split.code, 3);
+  assert.match(split.err, /--max は正の整数/);
   assert.equal(run(["fill", file, path.join(path.dirname(file), "out.md"), "--max", "abc"]).code, 3);
+});
+
+test("compose はリンク先のコメントがない本文を構造の異常（終了コード 2）にする", () => {
+  const file = tmp("body.md", body({ needs: ["A02"] }).replace(/<details>[\s\S]*?<\/details>\n/, "詳細: [要検証の詳細](https://github.com/o/r/issues/1#issuecomment-9)\n"));
+  const comments = path.join(path.dirname(file), "c.json");
+  fs.writeFileSync(comments, "[]");
+  const r = run(["compose", file, comments, path.join(path.dirname(file), "out.md")]);
+  assert.equal(r.code, 2);
+  assert.match(r.out, /^details_comment_missing:/);
 });
 
 test("split は本文だけで上限を超えるとき終了コード 1 で止める", () => {
