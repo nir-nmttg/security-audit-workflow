@@ -1,0 +1,4 @@
+{
+  "agent:security-audit": { "color": "b60205", "description": "セキュリティ監査の調査結果と修正課題" },
+  "agent:autofix": { "color": "0e8a16", "description": "自動で修正するエージェントに任せられる修正課題" }
+}

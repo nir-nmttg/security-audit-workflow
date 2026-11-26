@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # security-audit-workflow を origin の既定ブランチまで fast-forward し、Claude Code・Codex へリンクし直して、
-# security-audit-preflight の確認結果を Markdown で出力する。
+# security-audit-preflight の確認結果を Markdown で出力する。確認結果は、そろっていれば 1 行、問題があれば ❌・⚠️ の行だけを出す。
 #
 # 使い方: update.sh
 #   - メインの checkout が既定ブランチ（origin/HEAD、取れなければ main）にいるときだけ、取り込みとリンクを行う
@@ -16,13 +16,13 @@ main() {
   repo_root=$(cd -P "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)
 
   if ! command -v git >/dev/null 2>&1; then
-    printf '## 更新\n\n`git` が見つからないので、取り込みもリンクもしていません。\n\n'
+    printf '`git` が見つからないので、取り込みもリンクもしていません。\n\n'
     run_checks "$repo_root"
     return
   fi
   if ! git_dir=$(git -C "$repo_root" rev-parse --path-format=absolute --git-dir 2>/dev/null) ||
     ! common_dir=$(git -C "$repo_root" rev-parse --path-format=absolute --git-common-dir 2>/dev/null); then
-    printf '## 更新\n\n%s を git リポジトリと判定できないので、取り込みもリンクもしていません。\n\n' "$repo_root"
+    printf '%s を git リポジトリと判定できないので、取り込みもリンクもしていません。\n\n' "$repo_root"
     run_checks "$repo_root"
     return
   fi
@@ -34,38 +34,28 @@ main() {
     if [[ -z ${SECURITY_AUDIT_SKILLS_UPDATE_FROM_WORKTREE:-} && -f $target ]]; then
       SECURITY_AUDIT_SKILLS_UPDATE_FROM_WORKTREE=1 exec bash "$target"
     fi
-    printf '## 更新\n\ngit worktree の中なので、取り込みもリンクもしていません。メインの checkout（%s）から実行し直してください。\n\n' "$main_root"
+    printf 'git worktree の中なので、取り込みもリンクもしていません。メインの checkout（%s）から実行し直してください。\n\n' "$main_root"
     run_checks "$repo_root"
     return
   fi
 
-  local default_branch branch can_link=false
+  local default_branch branch
   default_branch=$(git -C "$repo_root" symbolic-ref --short -q refs/remotes/origin/HEAD 2>/dev/null)
   default_branch=${default_branch#origin/}
   default_branch=${default_branch:-main}
   branch=$(git -C "$repo_root" symbolic-ref --short -q HEAD 2>/dev/null)
 
-  echo "## 更新"
-  echo
-  [[ -z ${SECURITY_AUDIT_SKILLS_UPDATE_FROM_WORKTREE:-} ]] || echo "git worktree から呼ばれたので、メインの checkout（${repo_root}）で実行しました。"
+  [[ -z ${SECURITY_AUDIT_SKILLS_UPDATE_FROM_WORKTREE:-} ]] || printf 'git worktree から呼ばれたので、メインの checkout（%s）で実行しました。\n\n' "$repo_root"
   if [[ $branch != "$default_branch" ]]; then
     # 作業中のブランチの内容を全プロジェクトにリンクしないよう、リンクも飛ばす
-    echo "メインの checkout（${repo_root}）が ${branch:-detached HEAD} にあり、${default_branch} ではないので、取り込みもリンクもしていません。"
-    echo "$default_branch に戻してから実行し直してください。"
+    printf 'メインの checkout（%s）が %s にあり、%s ではないので、取り込みもリンクもしていません。\n\n' "$repo_root" "${branch:-detached HEAD}" "$default_branch"
+    printf '%s に戻してから実行し直してください。\n\n' "$default_branch"
   else
-    can_link=true
     update "$repo_root" "$default_branch"
-  fi
-  echo
-
-  echo "## リンク"
-  echo
-  if $can_link; then
+    echo
     link "$repo_root"
-  else
-    echo "飛ばしました（上の「更新」を参照）。"
+    echo
   fi
-  echo
 
   run_checks "$repo_root"
 }
@@ -132,33 +122,83 @@ link() {
   fi
 }
 
-# run_checks <repo_root>: security-audit-preflight の確認スクリプトを実行し、見出しを下げて載せる
+# run_checks <repo_root>: security-audit-preflight の確認結果を出す。
+# 両方の確認がそろっていれば 1 行、問題があれば ❌・⚠️ の行だけを表の見出しつきで出す。
+# 「## 確認結果」は最後の節にする（SKILL.md がこの見出しの有無で取り直しを判断する）
 run_checks() {
-  local repo_root=$1
+  local repo_root=$1 claude_out claude_status codex_out codex_status
+  run_check "$repo_root/.claude/skills/security-audit-preflight/scripts/check.sh"
+  claude_out=$CHECK_OUT
+  claude_status=$CHECK_STATUS
+  run_check "$repo_root/.agents/skills/security-audit-preflight/scripts/check.sh"
+  codex_out=$CHECK_OUT
+  codex_status=$CHECK_STATUS
+
   echo "## 確認結果"
   echo
-  echo "### Claude Code"
-  echo
-  run_check "$repo_root/.claude/skills/security-audit-preflight/scripts/check.sh"
-  echo
-  echo "### Codex（定義とリンクの状態）"
-  echo
-  echo "スキルごとの利用可否は、Codex から \`\$security-audit-preflight\` で確かめてください。"
-  echo
-  run_check "$repo_root/.agents/skills/security-audit-preflight/scripts/check.sh"
-}
-
-# run_check <check.sh>
-run_check() {
-  local script=$1 out status
-  if [[ ! -f $script ]]; then
-    echo "\`$script\` が見つかりません。"
+  if [[ $claude_status == 0 && $codex_status == 0 ]] && is_all_ok "$claude_out" && is_all_ok "$codex_out"; then
+    echo "✅ Claude Code・Codex とも、すべての前提を満たしています"
+    echo
     return
   fi
-  out=$(bash "$script" </dev/null 2>&1)
-  status=$?
-  LC_ALL=C sed 's/^## /#### /' <<<"$out"
-  ((status == 0)) || echo "（確認スクリプトが終了コード $status で終わりました）"
+  check_section "Claude Code" "$claude_status" "$claude_out"
+  check_section "Codex" "$codex_status" "$codex_out"
+  echo "スキルごとの利用可否は、Codex から \`\$security-audit-preflight\` で確かめてください。"
+  echo
+}
+
+# run_check <check.sh>: 確認スクリプトを実行し、結果を CHECK_OUT・CHECK_STATUS に入れる（なければ CHECK_STATUS=missing）
+run_check() {
+  if [[ ! -f $1 ]]; then
+    CHECK_OUT=''
+    CHECK_STATUS=missing
+    return
+  fi
+  CHECK_OUT=$(bash "$1" </dev/null 2>&1)
+  CHECK_STATUS=$?
+}
+
+# check_section <見出し> <終了コード> <出力>: 問題の行を出す。そろっていれば 1 行、想定外の出力はそのまま出す
+check_section() {
+  local label=$1 status=$2 out=$3 table
+  echo "### $label"
+  echo
+  if [[ $status == missing ]]; then
+    echo "確認スクリプトが見つかりません。"
+  elif table=$(problem_table "$out"); then
+    echo "$table"
+  elif is_all_ok "$out"; then
+    echo "$out"
+  elif [[ -n $out ]]; then
+    # 想定外の出力は省かずに出す。「## 確認結果」を最後の節に保つため、見出しは下げる
+    LC_ALL=C sed 's/^## /#### /' <<<"$out"
+  else
+    echo "（出力がありません）"
+  fi
+  if [[ $status != missing && $status != 0 ]]; then
+    echo "（確認スクリプトが終了コード $status で終わりました）"
+  fi
+  echo
+}
+
+# problem_table <出力>: 表の見出しと区切り、❌・⚠️ の行を出す。問題の行がなければ何も出さずに終わる
+problem_table() {
+  local line head=() rows=()
+  while IFS= read -r line; do
+    case $line in
+      '| ❌ '*|'| ⚠️ '*) rows+=("$line") ;;
+      '| ✅ '*) ;;
+      '| '*) ((${#head[@]} < 2)) && head+=("$line") ;;
+    esac
+  done <<<"$1"
+  ((${#rows[@]} > 0)) || return 1
+  if ((${#head[@]} > 0)); then printf '%s\n' "${head[@]}"; fi
+  printf '%s\n' "${rows[@]}"
+}
+
+# is_all_ok <出力>: すべてそろっているときの 1 行か
+is_all_ok() {
+  [[ $1 == '✅ すべての前提を満たしています（'*'項目）' ]]
 }
 
 # code_block <text>

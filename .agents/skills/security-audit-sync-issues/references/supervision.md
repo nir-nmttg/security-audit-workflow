@@ -3,7 +3,7 @@
 Codex の安全審査は、詳細が集まる Coordinator のターンを途中で終わらせることがある（`cyber_policy`）。終わってもセッションは残り、続きを頼めば続きから進む。このスキルを呼び出したエージェントを **Supervisor** にし、監査と Issue 反映を **Coordinator**（サブエージェント）に任せて、Coordinator が止まったら Supervisor が人の代わりに続きを頼む。
 
 - Coordinator の審査による停止は、このスキルが想定している出来事。止まると、Coordinator の最終回答として `Agent errored: This content was flagged for possible cybersecurity risk …` と Daybreak の申請の案内が届く。これは利用者が手で続きを頼むときと同じ停止で、自動で続きを頼むのは利用者が選んだ扱い。案内が届いても、次の動きは `SUPERVISE` の判定だけで決める。続きを頼んだターンも審査の対象のままで、Coordinator には止まる直前に扱っていた項目を保留させる。進まなければ判定が `give_up` を出す。
-- Supervisor が読むのは、`scripts/supervise.mjs` が出す決まった語・数・ハッシュ・URL・保留の理由（Coordinator が `issue_sync` に記録した短い文）・送る文面と、Coordinator の状態報告だけにする。利用者には `SUPERVISE summary` の件数で進み具合を伝える。
+- Supervisor が読むのは、`scripts/supervise.mjs` が出す決まった語・数・ハッシュ・URL・保留の理由（Coordinator が `issue_sync` に記録した短い文）・送る文面と、Coordinator の状態報告だけにする。利用者への途中経過は、段階が変わったとき（Coordinator の停止・続きの依頼・終わり）だけ `SUPERVISE summary` の件数で伝える。待っている間の時間切れのたびには送らない。
 - Supervisor が Coordinator に送るのは、[1. 始める](#1-始める) の指示と、`SUPERVISE` が「送る文面:」の下に出す文面だけにし、文面はそのまま送る。Worker の起動と中断は Coordinator に任せる。
 - Supervisor が書くのは、実行フォルダの `supervisor.json`（`scripts/supervise.mjs` 経由）だけ。元スキルの共有ファイルと `run-metadata.json` は Coordinator が書く。
 
@@ -13,7 +13,7 @@ Codex の安全審査は、詳細が集まる Coordinator のターンを途中�
 
 1. 同じ会話の中で扱っている実行があれば、`SUPERVISE state "$RUN_DIR"` で段階を読み、[4. 利用者が続きを頼んだとき](#4-利用者が続きを頼んだとき) に進む。新しく呼び出されたときは、新しい実行を始める。
 2. SKILL.md の「引数を確かめる」を行い、`~/security-audit-skill/<repo-name>/` に次の未使用の `run-<N>/` を作る。
-3. `SUPERVISE init "$RUN_DIR"` を実行してから、`spawn_agent` で Coordinator を起動する。起動できたら、直後に `SUPERVISE attach "$RUN_DIR" <Coordinator のエージェント ID>` を実行する。`spawn_agent` が使えない・失敗したときは `SUPERVISE record "$RUN_DIR" unsupported` を実行し、Supervisor が同じ `RUN_DIR` を出力先にして SKILL.md の手順 1〜5 を自分で行う。
+3. `SUPERVISE init "$RUN_DIR"` を実行してから、`spawn_agent` で Coordinator を起動する。起動できたら、直後に `SUPERVISE attach "$RUN_DIR" <Coordinator のエージェント ID> --model <Coordinator のモデル名>` を実行する（審査で止まった回数をモデルごとに比べるため。モデル名がわからなければ `--model` を省く）。`spawn_agent` が使えない・失敗したときは `SUPERVISE record "$RUN_DIR" unsupported` を実行し、Supervisor が同じ `RUN_DIR` を出力先にして SKILL.md の手順 1〜6 を自分で行う。
 
 Coordinator への指示には次だけを書く。
 
@@ -21,12 +21,13 @@ Coordinator への指示には次だけを書く。
 あなたは $security-audit-sync-issues の Coordinator です。<このスキルの SKILL.md の絶対パス> の「Supervisor と Coordinator に分けて進める」にある Coordinator の役目に従ってください。
 - 出力先には、作成済みの <RUN_DIR> を使ってください。
 - フル監査です。プロファイル: <profile>、範囲: <範囲>、予算: <budget または null>。
+- 続きの監査です。書き込み先の集約 Issue: <URL>、対象: <番号、または「未検証と未完了の工程・範囲」>。（集約 Issue を指定されたときだけ書く）
 - ターンを終えるときは、SKILL.md の状態報告の JSON だけを最終回答にしてください。
 ```
 
 ## 2. 待つ・判定する
 
-`wait_agent` で Coordinator を待ち、返り方で分ける。
+`wait_agent` で Coordinator を待ち、返り方で分ける。待ち時間は長め（10 分程度）にする。
 
 | 返り方 | すること |
 | --- | --- |
@@ -41,7 +42,7 @@ Coordinator への指示には次だけを書く。
 状態報告を受け取ったとき:
 
 - `complete`・`incomplete`: `SUPERVISE check "$RUN_DIR" <status>` が `ok` なら `SUPERVISE finish "$RUN_DIR" done` を実行し、[5. 報告する](#5-報告する) に進む。`mismatch` なら `SUPERVISE record "$RUN_DIR" malformed` を実行してから [3. 続きを頼む](#3-続きを頼む) に進む（Issue 反映が残っていれば、Coordinator はそれを続ける）。
-- `unsupported`: `SUPERVISE record "$RUN_DIR" unsupported` を実行し（段階が `self_auditing` になる）、Supervisor が同じ `RUN_DIR` を出力先にして SKILL.md の手順 1〜5 を自分で行う。終えたら `SUPERVISE finish "$RUN_DIR" done` を実行する。止まったら人が「続けてください」を送る。
+- `unsupported`: `SUPERVISE record "$RUN_DIR" unsupported` を実行し（段階が `self_auditing` になる）、Supervisor が同じ `RUN_DIR` を出力先にして SKILL.md の手順 1〜6 を自分で行う。終えたら `SUPERVISE finish "$RUN_DIR" done` を実行する。止まったら人が「続けてください」を送る。
 
 ## 3. 続きを頼む
 
@@ -68,4 +69,4 @@ Supervisor が止まったあとや、報告してターンを終えたあとに
 
 ## 5. 報告する
 
-自動で続けるのをやめるとき（`done`・`give_up`・`report`）は、どの場合も `SUPERVISE summary "$RUN_DIR"` の値で、SKILL.md の手順 5 の最終報告を書く。値が `null` の件数は不明と書き、`files` が `missing`・`unreadable` のファイルと `incomplete_reason` を停止理由として示す。あわせて、その実行の自動の続きの上限（`supervisor.max_auto_resumes`）、止まった回数（`supervisor.stops`）、自動の続き（`auto_resumes`。人の再開をまたいだ累計と明記して書く。上限は人の再開ごとに数え直すので、累計は上限を超えることがある）、人による Coordinator の再開（`human_resumes`）、Supervisor の再開（`supervisor_resumes`）の回数、観測したエラーの種別、あきらめた・利用者に返した理由（`gave_up_reasons`・`returned_reasons`）を書く。Worker の Terra への頼み直しは `model_fallback` の件数で書く（審査で止まった元の Worker の数 `stopped_workers`、Terra を起動できた数 `launched`、Terra も審査で止まった数 `stopped`、結果ごとの数、見送りの理由ごとの数。`null` なら記録なし、`partial` が真なら再開後の分だけ）。
+自動で続けるのをやめるとき（`done`・`give_up`・`report`）は、どの場合も `SUPERVISE summary "$RUN_DIR"` の値で、SKILL.md の手順 5・6 の最終報告（次の一手を含む）を書く。値が `null` の件数は不明と書き、`files` が `missing`・`unreadable` のファイルと `incomplete_reason` を停止理由として示す。あわせて、Coordinator のモデル（`supervisor.coordinator_model`）、その実行の自動の続きの上限（`supervisor.max_auto_resumes`）、止まった回数（`supervisor.stops`）、自動の続き（`auto_resumes`。人の再開をまたいだ累計と明記して書く。上限は人の再開ごとに数え直すので、累計は上限を超えることがある）、人による Coordinator の再開（`human_resumes`）、Supervisor の再開（`supervisor_resumes`）の回数、観測したエラーの種別、あきらめた・利用者に返した理由（`gave_up_reasons`・`returned_reasons`）を書く。Worker の Terra への頼み直しは `model_fallback` の件数で書く（審査で止まった元の Worker の数 `stopped_workers`、Terra を起動できた数 `launched`、Terra も審査で止まった数 `stopped`、結果ごとの数、見送りの理由ごとの数。`null` なら記録なし、`partial` が真なら再開後の分だけ）。

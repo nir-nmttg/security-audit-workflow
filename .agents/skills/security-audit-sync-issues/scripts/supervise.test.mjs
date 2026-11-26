@@ -419,3 +419,21 @@ test("長いエラーの種別でも、判定の reason で returned を記録�
   assert.equal(reason, `error_kind:${"x".repeat(64)}`);
   assert.match(main(["record", dir, "returned", reason]), /^returned /);
 });
+
+test("attach は Coordinator のモデル名を記録し、summary に出す", () => {
+  const dir = runDir();
+  main(["init", dir]);
+  assert.throws(() => main(["attach", dir, "agent-1", "--model", "bad model"]), /使い方/);
+  assert.equal(main(["attach", dir, "agent-1", "--model", "gpt-6.2-sol"]), "auditing");
+  assert.equal(JSON.parse(main(["summary", dir])).supervisor.coordinator_model, "gpt-6.2-sol");
+  const old = runDir();
+  started(old);
+  assert.equal(JSON.parse(main(["summary", old])).supervisor.coordinator_model, null);
+});
+
+test("Coordinator に送る文面は、頼み直しの再開の手順として SKILL.md の節を指す", () => {
+  const dir = runDir();
+  started(dir);
+  const out = main(["record", dir, "stopped", "cyber_policy"]);
+  assert.match(out, /SKILL\.md の「審査で止まった Worker を別のモデルに頼み直す」の再開の手順/);
+});
