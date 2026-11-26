@@ -72,7 +72,7 @@ test("停止のあいだに成果物が変われば進んだとみなす", () =>
 test("自動の続きは malformed の出し直しを含めて上限ちょうどで止まる", () => {
   const dir = runDir();
   started(dir);
-  for (let i = 0; i < 8; i += 1) {
+  for (let i = 0; i < 10; i += 1) {
     fs.writeFileSync(path.join(dir, "REPORT.md"), `v${i}`);
     main(["record", dir, i % 2 ? "malformed" : "stopped"]);
     assert.equal(next(dir), "continue", `回数 ${i}`);
@@ -81,6 +81,30 @@ test("自動の続きは malformed の出し直しを含めて上限ちょうど
   fs.writeFileSync(path.join(dir, "REPORT.md"), "last");
   main(["record", dir, "stopped"]);
   assert.equal(next(dir), "give_up reason=max_auto_resumes");
+});
+
+test("上限は実行を始めたときの値を使い、変更の前に始めた実行は人の再開のあとも 8 回のまま", () => {
+  const dir = runDir();
+  started(dir);
+  const file = path.join(dir, "supervisor.json");
+  writeJson(dir, "supervisor.json", { ...JSON.parse(fs.readFileSync(file, "utf8")), max_auto_resumes: 8 });
+  // 人の再開で回数は 0 に戻るが、上限は書き直されない
+  for (const round of ["first", "after_resume"]) {
+    for (let i = 0; i < 8; i += 1) {
+      fs.writeFileSync(path.join(dir, "REPORT.md"), `${round}-${i}`);
+      main(["record", dir, "stopped"]);
+      assert.equal(next(dir), "continue", `${round} 回数 ${i}`);
+      main(["record", dir, "resuming"]);
+    }
+    fs.writeFileSync(path.join(dir, "REPORT.md"), `${round}-last`);
+    main(["record", dir, "stopped"]);
+    assert.equal(next(dir), "give_up reason=max_auto_resumes");
+    main(["finish", dir, "gave_up", "max_auto_resumes"]);
+    if (round === "first") assert.equal(decision(main(["resume", dir])), "auditing");
+  }
+  const s = JSON.parse(main(["summary", dir]));
+  assert.equal(s.supervisor.max_auto_resumes, 8);
+  assert.equal(s.supervisor.auto_resumes, 16);
 });
 
 test("審査以外のエラーと送信の失敗は利用者に返す", () => {
@@ -166,7 +190,7 @@ test("状態不明のあと出し直しを頼めば continue に戻る", () => {
 test("自動の続きの累計は人による再開をまたいで数え、あきらめた理由も残す", () => {
   const dir = runDir();
   started(dir);
-  for (let i = 0; i < 8; i += 1) {
+  for (let i = 0; i < 10; i += 1) {
     fs.writeFileSync(path.join(dir, "REPORT.md"), `v${i}`);
     main(["record", dir, "stopped", "cyber_policy"]);
     main(["record", dir, "resuming"]);
@@ -180,7 +204,8 @@ test("自動の続きの累計は人による再開をまたいで数え、あ�
   main(["record", dir, "stopped", "usage_limit"]);
   main(["record", dir, "returned", "error_kind:usage_limit"]);
   const s = JSON.parse(main(["summary", dir]));
-  assert.equal(s.supervisor.auto_resumes, 9);
+  assert.equal(s.supervisor.auto_resumes, 11);
+  assert.equal(s.supervisor.max_auto_resumes, 10);
   assert.equal(s.supervisor.human_resumes, 1);
   assert.deepEqual(s.supervisor.gave_up_reasons, ["max_auto_resumes"]);
   assert.deepEqual(s.supervisor.returned_reasons, ["error_kind:usage_limit"]);
@@ -328,7 +353,7 @@ test("停止を記録すると、次の動きと送る文面を続けて示す",
   started(dir);
   const out = main(["record", dir, "stopped", "cyber_policy"]);
   const lines = out.split("\n");
-  assert.match(lines[0], /^stopped auto_resumes=0\/8/);
+  assert.match(lines[0], /^stopped auto_resumes=0\/10/);
   assert.equal(lines[1], "continue");
   assert.equal(lines[2], "送る文面:");
   assert.match(out, /止まる直前に扱っていた項目だけを保留/);

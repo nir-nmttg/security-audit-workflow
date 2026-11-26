@@ -53,7 +53,7 @@ Coordinator への指示には次だけを書く。
 - `wait`: 待ち直す。
 - `none`: 段階が `auditing` ではない。`SUPERVISE state` で段階を確かめ、[4. 利用者が続きを頼んだとき](#4-利用者が続きを頼んだとき) に従う。
 
-`give_up` は、続けて2回進まなかった停止（実行フォルダの成果物のハッシュが前回の停止から変わらない）、自動の続きが上限の8回（`malformed` の出し直しを含む）に達したとき、状態不明が3回続いたときに出る。`returned` と `gave_up` は、判定がその語を出したときに、出力の reason でだけ記録できる。
+`give_up` は、続けて2回進まなかった停止（実行フォルダの成果物のハッシュが前回の停止から変わらない）、自動の続きが上限の10回（`malformed` の出し直しを含む。上限は実行を始めたときに `supervisor.json` に記録され、10回にする前に始めた実行は8回のまま）に達したとき、状態不明が3回続いたときに出る。`returned` と `gave_up` は、判定がその語を出したときに、出力の reason でだけ記録できる。
 
 ## 4. 利用者が続きを頼んだとき
 
@@ -68,4 +68,4 @@ Supervisor が止まったあとや、報告してターンを終えたあとに
 
 ## 5. 報告する
 
-自動で続けるのをやめるとき（`done`・`give_up`・`report`）は、どの場合も `SUPERVISE summary "$RUN_DIR"` の値で、SKILL.md の手順 5 の最終報告を書く。値が `null` の件数は不明と書き、`files` が `missing`・`unreadable` のファイルと `incomplete_reason` を停止理由として示す。あわせて、止まった回数（`supervisor.stops`）、自動の続き（`auto_resumes`）、人による Coordinator の再開（`human_resumes`）、Supervisor の再開（`supervisor_resumes`）の回数、観測したエラーの種別、あきらめた・利用者に返した理由（`gave_up_reasons`・`returned_reasons`）を書く。Worker の Terra への頼み直しは `model_fallback` の件数で書く（審査で止まった元の Worker の数 `stopped_workers`、Terra を起動できた数 `launched`、Terra も審査で止まった数 `stopped`、結果ごとの数、見送りの理由ごとの数。`null` なら記録なし、`partial` が真なら再開後の分だけ）。
+自動で続けるのをやめるとき（`done`・`give_up`・`report`）は、どの場合も `SUPERVISE summary "$RUN_DIR"` の値で、SKILL.md の手順 5 の最終報告を書く。値が `null` の件数は不明と書き、`files` が `missing`・`unreadable` のファイルと `incomplete_reason` を停止理由として示す。あわせて、その実行の自動の続きの上限（`supervisor.max_auto_resumes`）、止まった回数（`supervisor.stops`）、自動の続き（`auto_resumes`。人の再開をまたいだ累計と明記して書く。上限は人の再開ごとに数え直すので、累計は上限を超えることがある）、人による Coordinator の再開（`human_resumes`）、Supervisor の再開（`supervisor_resumes`）の回数、観測したエラーの種別、あきらめた・利用者に返した理由（`gave_up_reasons`・`returned_reasons`）を書く。Worker の Terra への頼み直しは `model_fallback` の件数で書く（審査で止まった元の Worker の数 `stopped_workers`、Terra を起動できた数 `launched`、Terra も審査で止まった数 `stopped`、結果ごとの数、見送りの理由ごとの数。`null` なら記録なし、`partial` が真なら再開後の分だけ）。

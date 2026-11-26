@@ -5,7 +5,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 const STATE_FILE = "supervisor.json";
-const MAX_AUTO_RESUMES = 8;
+const MAX_AUTO_RESUMES = 10;
 const MAX_NO_PROGRESS = 2;
 const MAX_UNKNOWN = 3;
 const STAGES = ["starting", "auditing", "self_auditing", "gave_up", "done"];
@@ -377,6 +377,8 @@ function cmdSummary(dir) {
       model_fallback: files.model_fallback === "ok" ? fallbackCounts(fallback.value) : null,
       supervisor: {
         stage: state.ok ? state.value?.stage ?? null : null,
+        // その実行の上限（実行を始めたときの値）。auto_resumes は人の再開をまたいだ累計なので、上限を超えることがある
+        max_auto_resumes: state.ok && Number.isInteger(state.value?.max_auto_resumes) ? state.value.max_auto_resumes : null,
         stops: count("stopped"),
         malformed: count("malformed"),
         auto_resumes: count("resuming"),
