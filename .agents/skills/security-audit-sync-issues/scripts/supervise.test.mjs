@@ -189,14 +189,17 @@ test("自動の続きの累計は人による再開をまたいで数え、あ�
 test("summary は読めない成果物の件数を null にし、空の配列の 0 件と分ける", () => {
   const dir = runDir();
   let s = JSON.parse(main(["summary", dir]));
-  assert.deepEqual(s.files, { run_metadata: "missing", coverage_ledger: "missing", findings: "missing" });
+  assert.deepEqual(s.files, { run_metadata: "missing", coverage_ledger: "missing", findings: "missing", model_fallback: "missing" });
   assert.equal(s.counts, null);
   assert.equal(s.ledger, null);
+  assert.equal(s.model_fallback, null);
   fs.writeFileSync(path.join(dir, "findings.json"), "{");
   writeJson(dir, "coverage-ledger.json", { not: "array" });
   writeJson(dir, "run-metadata.json", null);
+  writeJson(dir, "model-fallback.json", { attempts: "not array" });
   s = JSON.parse(main(["summary", dir]));
-  assert.deepEqual(s.files, { run_metadata: "unreadable", coverage_ledger: "unreadable", findings: "unreadable" });
+  assert.deepEqual(s.files, { run_metadata: "unreadable", coverage_ledger: "unreadable", findings: "unreadable", model_fallback: "unreadable" });
+  assert.equal(s.model_fallback, null);
   assert.equal(s.counts, null);
   writeJson(dir, "findings.json", []);
   writeJson(dir, "coverage-ledger.json", []);
@@ -204,6 +207,41 @@ test("summary は読めない成果物の件数を null にし、空の配列の
   s = JSON.parse(main(["summary", dir]));
   assert.deepEqual(s.counts, { confirmed: 0, needs_validation: 0, rejected: 0, other: 0, unverified: 0 });
   assert.equal(s.incomplete_reason, "validation_budget_exhausted");
+});
+
+test("summary は頼み直しの件数だけを出し、0 件の記録と記録なしを分ける", () => {
+  const dir = runDir();
+  writeJson(dir, "model-fallback.json", { model: "gpt-6.1-terra", partial: false, attempts: [] });
+  let s = JSON.parse(main(["summary", dir]));
+  assert.equal(s.files.model_fallback, "ok");
+  assert.equal(s.model_fallback.stopped_workers, 0);
+  assert.equal(s.model_fallback.launched, 0);
+  writeJson(dir, "model-fallback.json", {
+    model: "gpt-6.1-terra",
+    partial: true,
+    attempts: [
+      { stopped_agent_id: "hunter-a", retry_agent_id: "hunter-a-terra", codex_agent_id: "thread-1", coverage_ids: ["unit::secret-a"], result: "completed" },
+      { stopped_agent_id: "hunter-b", retry_agent_id: "hunter-b-terra", codex_agent_id: "thread-2", fingerprints: ["fp-secret"], result: "stopped" },
+      { stopped_agent_id: "verifier-c", retry_agent_id: "verifier-c-terra", codex_agent_id: null, result: "pending" },
+      { stopped_agent_id: "hunter-d", retry_agent_id: null, codex_agent_id: null, result: "skipped_budget" },
+      { stopped_agent_id: "hunter-e", retry_agent_id: null, result: "weird" },
+      "not an object",
+    ],
+  });
+  const out = main(["summary", dir]);
+  assert.doesNotMatch(out, /secret|hunter-a|thread-1/);
+  s = JSON.parse(out);
+  assert.equal(s.model_fallback.model, "gpt-6.1-terra");
+  assert.equal(s.model_fallback.partial, true);
+  assert.equal(s.model_fallback.stopped_workers, 6);
+  assert.equal(s.model_fallback.launched, 2);
+  assert.equal(s.model_fallback.completed, 1);
+  assert.equal(s.model_fallback.stopped, 1);
+  assert.equal(s.model_fallback.pending, 1);
+  assert.equal(s.model_fallback.skipped_budget, 1);
+  assert.equal(s.model_fallback.other, 2);
+  writeJson(dir, "model-fallback.json", { model: "bad model name", attempts: [] });
+  assert.equal(JSON.parse(main(["summary", dir])).model_fallback.model, null);
 });
 
 test("check は run-metadata.json が null や配列でも mismatch を返す", () => {

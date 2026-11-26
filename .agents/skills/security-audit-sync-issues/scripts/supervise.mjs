@@ -15,6 +15,9 @@ const DECISION_KINDS = ["stopped", "malformed", "unknown", "followup_failed", "r
 const LEDGER_STATUSES = ["planned", "in_progress", "candidate", "covered", "blocked", "deferred", "not_applicable", "out_of_scope"];
 const VERDICTS = ["confirmed", "needs_validation", "rejected"];
 const ISSUE_SYNC_DONE = ["complete", "partial", "blocked"];
+// 審査で止まった Worker を別のモデルに頼み直した記録。書き手は Coordinator が呼ぶ scripts/fallback.mjs
+const FALLBACK_FILE = "model-fallback.json";
+const FALLBACK_RESULTS = ["completed", "invalid", "stopped", "failed", "unavailable", "interrupted", "pending", "skipped_duplicate", "skipped_budget", "skipped_unavailable", "skipped_fuse"];
 const SAFE_TOKEN = /^[a-z0-9][a-z0-9_.:-]{0,63}$/;
 const REASON_TOKEN = /^[a-z0-9][a-z0-9_.:-]{0,127}$/;
 
@@ -23,7 +26,7 @@ const MESSAGES = {
   // 審査などでターンが途中で終わったあと
   continue: [
     "前のターンは途中で終わりました。実行フォルダの記録を読み直してください。",
-    "- 動いている Worker や、終わった Worker の結果は受け取ってください。",
+    "- 動いている Worker や、終わった Worker の結果は受け取ってください。ただし、別のモデルへの頼み直しの途中だった Worker は、SKILL.md の「審査で止まった Worker を別のモデルに頼み直す」の再開の手順に従ってください。",
     "- 項目に分かれる作業（監査単位・候補・所見・修正 Issue）は、止まる直前に扱っていた項目だけを保留とし、理由を台帳（Issue 反映は issue_sync）に記録してください。",
     "- 項目に分かれない作業（初期調査、findings.json・報告書・集約 Issue の作成）は、保存済みの記録をもとに1回だけ進め直してください。同じところでまた止まったら、そこまでの結果を保存し、未完了として理由を記録してください。",
     "- そのほかの作業は、止まる前の続きから進めてください。",
@@ -35,6 +38,7 @@ const MESSAGES = {
   resume: [
     "利用者の依頼で再開します。実行フォルダの記録を読み直し、未完了の工程を続きから進めてください。",
     "- 審査の停止で保留にした項目は保留のままにし、そのほかの保留は再開条件を満たすものだけ進めてください。",
+    "- 別のモデルへの頼み直しの途中だった Worker は、SKILL.md の「審査で止まった Worker を別のモデルに頼み直す」の再開の手順に従ってください。",
     "ターンを終えるときは、SKILL.md の状態報告の JSON だけを最終回答にしてください。",
   ].join("\n"),
 };
@@ -274,15 +278,34 @@ function numbersOnly(value) {
   return out;
 }
 
+// 頼み直しの件数だけを出す。監査単位 ID・fingerprint・エージェント ID は出さない
+function fallbackCounts(value) {
+  const counts = Object.fromEntries([...FALLBACK_RESULTS, "other"].map((r) => [r, 0]));
+  let launched = 0;
+  for (const a of value.attempts) {
+    counts[FALLBACK_RESULTS.includes(a?.result) ? a.result : "other"] += 1;
+    if (typeof a?.codex_agent_id === "string") launched += 1;
+  }
+  return {
+    model: SAFE_TOKEN.test(value.model ?? "") ? value.model : null,
+    partial: value.partial === true,
+    stopped_workers: value.attempts.length,
+    launched,
+    ...counts,
+  };
+}
+
 function cmdSummary(dir) {
   const meta = readJson(path.join(dir, "run-metadata.json"));
   const ledger = readJson(path.join(dir, "coverage-ledger.json"));
   const findings = readJson(path.join(dir, "findings.json"));
+  const fallback = readJson(path.join(dir, FALLBACK_FILE));
   const isObject = (v) => !!v && typeof v === "object" && !Array.isArray(v);
   const files = {
     run_metadata: fileStatus(meta, isObject),
     coverage_ledger: fileStatus(ledger, Array.isArray),
     findings: fileStatus(findings, Array.isArray),
+    model_fallback: fileStatus(fallback, (v) => isObject(v) && Array.isArray(v.attempts)),
   };
   const m = files.run_metadata === "ok" ? meta.value : {};
 
@@ -330,7 +353,7 @@ function cmdSummary(dir) {
   const reasons = (kind) => events.filter((e) => e?.kind === kind && typeof e.reason === "string").map((e) => e.reason);
 
   const sourceRef = typeof m.source_ref === "string" ? m.source_ref : m.source_ref?.commit;
-  const artifacts = ["REPORT.md", "FINDINGS-DETAIL.md", "NEEDS-VALIDATION.md", "findings.json", "coverage-ledger.json", "run-metadata.json"]
+  const artifacts = ["REPORT.md", "FINDINGS-DETAIL.md", "NEEDS-VALIDATION.md", "findings.json", "coverage-ledger.json", "run-metadata.json", FALLBACK_FILE]
     .map((name) => path.join(dir, name))
     .filter((p) => fs.existsSync(p));
 
@@ -350,6 +373,8 @@ function cmdSummary(dir) {
         individual_counts: numbersOnly(sync.individual_counts),
         individuals,
       },
+      // 記録がない・読めないときは null（files.model_fallback で区別する）
+      model_fallback: files.model_fallback === "ok" ? fallbackCounts(fallback.value) : null,
       supervisor: {
         stage: state.ok ? state.value?.stage ?? null : null,
         stops: count("stopped"),
