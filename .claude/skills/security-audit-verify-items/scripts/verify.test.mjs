@@ -9,6 +9,7 @@ import { checkBody, checkIssue, checkSecrets, items, lock, parse, pick, same, un
 
 const SCRIPT = path.join(path.dirname(fileURLToPath(import.meta.url)), "verify.mjs");
 const SHA2 = "b".repeat(40);
+const REPO = "github.com/o/r";
 
 function details(id, title, extra = []) {
   return [`<details><summary><b>${id}</b> ${title}</summary>`, "", "- **概要**: 説明。", ...extra, `- **ID**: \`fp-${id}\``, "", "</details>", ""];
@@ -210,20 +211,27 @@ test("split は本文だけで上限を超えるとき終了コード 1 で止�
   assert.match(r.out, /^(too_long_body|details_too_long):/);
 });
 
-function lockRun() {
+// lock の置き場所は一時フォルダにする（SECURITY_AUDIT_LOCK_DIR）。テストの後に元に戻す
+function lockRun(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "verify-items-lock-"));
+  const saved = process.env.SECURITY_AUDIT_LOCK_DIR;
+  process.env.SECURITY_AUDIT_LOCK_DIR = path.join(root, "locks");
+  t.after(() => {
+    if (saved === undefined) delete process.env.SECURITY_AUDIT_LOCK_DIR;
+    else process.env.SECURITY_AUDIT_LOCK_DIR = saved;
+  });
   const make = (name) => {
     const run = path.join(root, name);
     fs.mkdirSync(run);
     fs.writeFileSync(path.join(run, "repo"), "/x\n");
     return run;
   };
-  return { a: make("a"), b: make("b") };
+  return { a: make("a"), b: make("b"), locks: path.join(root, "locks") };
 }
 
-test("lock はほかの実行が持っている間は取れず、持ち主が外すと取れる", () => {
+test("lock はほかの実行が持っている間は取れず、持ち主が外すと取れる", (t) => {
   // 前準備
-  const { a, b } = lockRun();
+  const { a, b } = lockRun(t);
   const url = "https://github.com/o/r/issues/1";
   // 実行・検証
   assert.equal(lock(a, url), "ok");
@@ -237,9 +245,9 @@ test("lock はほかの実行が持っている間は取れず、持ち主が外
   assert.equal(lock(b, url), "ok");
 });
 
-test("lock は 30 分を過ぎた持ち主から引き継ぐ", () => {
+test("lock は 30 分を過ぎた持ち主から引き継ぐ", (t) => {
   // 前準備
-  const { a, b } = lockRun();
+  const { a, b } = lockRun(t);
   const url = "https://github.com/o/r/issues/1";
   lock(a, url, Date.now() - 31 * 60 * 1000);
   // 実行
@@ -248,9 +256,9 @@ test("lock は 30 分を過ぎた持ち主から引き継ぐ", () => {
   assert.match(r, /^ok taken_over:/);
 });
 
-test("古い lock を引き継いだあとは、ほかの実行は引き継げない", () => {
+test("古い lock を引き継いだあとは、ほかの実行は引き継げない", (t) => {
   // 前準備
-  const { a, b } = lockRun();
+  const { a, b } = lockRun(t);
   const c = path.join(path.dirname(a), "c");
   fs.mkdirSync(c);
   fs.writeFileSync(path.join(c, "repo"), "/x\n");
@@ -267,7 +275,7 @@ test("古い lock を引き継いだあとは、ほかの実行は引き継げ�
 
 test("lock を置く直前に別の実行が置いたら、置かずに locked を返す", (t) => {
   // 前準備
-  const { a, b } = lockRun();
+  const { a, b, locks } = lockRun(t);
   const url = "https://github.com/o/r/issues/1";
   const rename = fs.renameSync;
   let bResult;
@@ -284,12 +292,12 @@ test("lock を置く直前に別の実行が置いたら、置かずに locked �
   // 検証
   assert.equal(bResult, "ok");
   assert.match(aResult, new RegExp(`^locked ${fs.realpathSync(b)} `));
-  assert.deepEqual(fs.readdirSync(path.join(fs.realpathSync(path.dirname(a)), ".locks")), ["github.com_o_r_1"]);
+  assert.deepEqual(fs.readdirSync(locks), ["github.com_o_r_1"]);
 });
 
 test("古い lock を読んでから名前を変えるまでに別の実行が引き継いだら、その lock を奪わない", (t) => {
   // 前準備
-  const { a, b } = lockRun();
+  const { a, b, locks } = lockRun(t);
   const c = path.join(path.dirname(a), "c");
   fs.mkdirSync(c);
   fs.writeFileSync(path.join(c, "repo"), "/x\n");
@@ -313,7 +321,7 @@ test("古い lock を読んでから名前を変えるまでに別の実行が�
   assert.match(bResult, new RegExp(`^locked ${fs.realpathSync(c)} `));
   assert.equal(lock(c, url), "ok");
   assert.deepEqual(
-    fs.readdirSync(path.join(fs.realpathSync(path.dirname(a)), ".locks")).filter((n) => n.includes(".stale-")),
+    fs.readdirSync(locks).filter((n) => n.includes(".stale-")),
     [],
   );
 });
@@ -348,8 +356,11 @@ test("check-body は置き換え忘れの印を止める", () => {
   assert.deepEqual(checkBody(before, after, ["A02"]), ["placeholder_left"]);
 });
 
+// 実行フォルダ（worktree/ が作業ツリー。その親に ledger/ と deps/ を置く）の中の git リポジトリを作る
 function repo() {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "verify-items-repo-"));
+  const run = fs.mkdtempSync(path.join(os.tmpdir(), "verify-items-repo-"));
+  const dir = path.join(run, "worktree");
+  fs.mkdirSync(dir);
   const g = (...args) => spawnSync("git", ["-C", dir, ...args], { encoding: "utf8" });
   g("init", "-q");
   fs.mkdirSync(path.join(dir, "app"));
@@ -362,7 +373,7 @@ function repo() {
   g("add", "app");
   g("-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "route group");
   const sha = g("rev-parse", "HEAD").stdout.trim();
-  return { dir, sha };
+  return { run, dir, sha };
 }
 
 function draft(sha, { fp = "fp-A02", extra = "" } = {}) {
@@ -380,56 +391,95 @@ function draft(sha, { fp = "fp-A02", extra = "" } = {}) {
 
 test("check-issue は正しい下書きを通す", () => {
   const { dir, sha } = repo();
-  assert.deepEqual(checkIssue(draft(sha), "fp-A02", sha, dir), []);
-  const r = run(["check-issue", tmp("d.md", draft(sha)), "--fingerprint", "fp-A02", "--sha", sha, "--worktree", dir]);
+  assert.deepEqual(checkIssue(draft(sha), "fp-A02", sha, dir, REPO), []);
+  const r = run(["check-issue", tmp("d.md", draft(sha)), "--fingerprint", "fp-A02", "--sha", sha, "--worktree", dir, "--repo", REPO]);
   assert.equal(r.out, "ok");
+});
+
+test("check-issue は --repo がないと終了コード 3", () => {
+  const { dir, sha } = repo();
+  const r = run(["check-issue", tmp("d.md", draft(sha)), "--fingerprint", "fp-A02", "--sha", sha, "--worktree", dir]);
+  assert.equal(r.code, 3);
+  assert.throws(() => checkIssue(draft(sha), "fp-A02", sha, dir, "github.com/o"), /--repo は/);
 });
 
 test("check-issue はマーカーの食い違い・タイトルの形・completed-at を止める", () => {
   const { dir, sha } = repo();
-  assert.deepEqual(checkIssue(draft(sha, { fp: "fp-other" }), "fp-A02", sha, dir), ["fingerprint_mismatch"]);
-  assert.deepEqual(checkIssue(draft(sha).replace("# [high] ", "# "), "fp-A02", sha, dir), ["title_line"]);
-  assert.deepEqual(checkIssue(draft(sha, { extra: "<!-- security-audit:completed-at=2026-11-16T00:00:00+09:00 -->" }), "fp-A02", sha, dir), ["completed_at_present"]);
+  assert.deepEqual(checkIssue(draft(sha, { fp: "fp-other" }), "fp-A02", sha, dir, REPO), ["fingerprint_mismatch"]);
+  assert.deepEqual(checkIssue(draft(sha).replace("# [high] ", "# "), "fp-A02", sha, dir, REPO), ["title_line"]);
+  assert.deepEqual(checkIssue(draft(sha, { extra: "<!-- security-audit:completed-at=2026-11-16T00:00:00+09:00 -->" }), "fp-A02", sha, dir, REPO), ["completed_at_present"]);
 });
 
 test("check-issue は固定されていないリンクとリンクのない下書きを止め、括弧を含むパスを通す", () => {
   const { dir, sha } = repo();
   const branch = draft(sha, { extra: "https://github.com/o/r/blob/main/app/a.rb#L2" });
-  assert.deepEqual(checkIssue(branch, "fp-A02", sha, dir), ["link_not_pinned:https://github.com/o/r/blob/main/app/a.rb#L2"]);
+  assert.deepEqual(checkIssue(branch, "fp-A02", sha, dir, REPO), ["link_not_pinned:https://github.com/o/r/blob/main/app/a.rb#L2"]);
   const none = draft(sha).replace(/^\[app.*$/m, "");
-  assert.deepEqual(checkIssue(none, "fp-A02", sha, dir), ["no_code_link"]);
+  assert.deepEqual(checkIssue(none, "fp-A02", sha, dir, REPO), ["no_code_link"]);
   const paren = draft(sha, { extra: `[app/(auth)/page.tsx:3](https://github.com/o/r/blob/${sha}/app/(auth)/page.tsx#L3)` });
-  assert.deepEqual(checkIssue(paren, "fp-A02", sha, dir), []);
+  assert.deepEqual(checkIssue(paren, "fp-A02", sha, dir, REPO), []);
+});
+
+test("check-issue は対象リポジトリを大文字と小文字を区別せずに一致させる", () => {
+  const { dir, sha } = repo();
+  const upper = draft(sha, { extra: `https://github.com/O/R/blob/main/app/a.rb#L2` });
+  assert.deepEqual(checkIssue(upper, "fp-A02", sha, dir, "GitHub.com/o/r"), ["link_not_pinned:https://github.com/O/R/blob/main/app/a.rb#L2"]);
+  const pinned = draft(sha, { extra: `https://GitHub.com/O/R/blob/${sha}/app/a.rb#L2` });
+  assert.deepEqual(checkIssue(pinned, "fp-A02", sha, dir, "github.com/o/r"), []);
 });
 
 test("check-issue は存在しないパスと行の範囲外のリンクを止める", () => {
   const { dir, sha } = repo();
   const missing = draft(sha, { extra: `https://github.com/o/r/blob/${sha}/app/none.rb#L1` });
-  assert.deepEqual(checkIssue(missing, "fp-A02", sha, dir), [`link_path_missing:https://github.com/o/r/blob/${sha}/app/none.rb#L1`]);
+  assert.deepEqual(checkIssue(missing, "fp-A02", sha, dir, REPO), [`link_path_missing:https://github.com/o/r/blob/${sha}/app/none.rb#L1`]);
   const out = draft(sha, { extra: `https://github.com/o/r/blob/${sha}/app/a.rb#L4` });
-  assert.deepEqual(checkIssue(out, "fp-A02", sha, dir), [`link_line_out_of_range:https://github.com/o/r/blob/${sha}/app/a.rb#L4`]);
+  assert.deepEqual(checkIssue(out, "fp-A02", sha, dir, REPO), [`link_line_out_of_range:https://github.com/o/r/blob/${sha}/app/a.rb#L4`]);
+});
+
+test("check-issue は別リポジトリのリンクを、deps.json の記録と同じ SHA のフォルダの中だけで通す", () => {
+  const { run: runDir, dir, sha } = repo();
+  fs.mkdirSync(path.join(runDir, "ledger"));
+  fs.mkdirSync(path.join(runDir, "deps", `lib@${SHA2}`, "src"), { recursive: true });
+  fs.writeFileSync(path.join(runDir, "deps", `lib@${SHA2}`, "src", "x.js"), "one\ntwo\nthree\n");
+  const record = { name: "lib", remote: "github.com/x/lib", sha: SHA2, source: "lockfile", adopted: true, local: "/x", path: `deps/lib@${SHA2}` };
+  fs.writeFileSync(path.join(runDir, "ledger", "deps.json"), JSON.stringify([record]));
+  const link = `https://github.com/X/Lib/blob/${SHA2}/src/x.js#L1-L2`;
+  // 記録と同じ SHA とフォルダのファイルなら通す
+  assert.deepEqual(checkIssue(draft(sha, { extra: `[x](${link})` }), "fp-A02", sha, dir, REPO), []);
+  // 記録がない・SHA が違うときは止める
+  const other = `https://github.com/x/lib/blob/${"c".repeat(40)}/src/x.js#L1`;
+  assert.deepEqual(checkIssue(draft(sha, { extra: other }), "fp-A02", sha, dir, REPO), [`link_not_pinned:${other}`]);
+  const unknown = `https://github.com/x/none/blob/${SHA2}/src/x.js#L1`;
+  assert.deepEqual(checkIssue(draft(sha, { extra: unknown }), "fp-A02", sha, dir, REPO), [`link_not_pinned:${unknown}`]);
+  // 記録のフォルダにファイルや行がないときは、今の理由の語
+  const missing = `https://github.com/x/lib/blob/${SHA2}/src/none.js#L1`;
+  assert.deepEqual(checkIssue(draft(sha, { extra: missing }), "fp-A02", sha, dir, REPO), [`link_path_missing:${missing}`]);
+  const out = `https://github.com/x/lib/blob/${SHA2}/src/x.js#L4`;
+  assert.deepEqual(checkIssue(draft(sha, { extra: out }), "fp-A02", sha, dir, REPO), [`link_line_out_of_range:${out}`]);
+  const escape = `https://github.com/x/lib/blob/${SHA2}/../../x.js#L1`;
+  assert.deepEqual(checkIssue(draft(sha, { extra: escape }), "fp-A02", sha, dir, REPO), [`link_path_missing:${escape}`]);
 });
 
 test("check-issue は .env の値とトークンらしい文字列を止める", () => {
   const { dir, sha } = repo();
-  assert.deepEqual(checkIssue(draft(sha, { extra: "鍵は abcdefgh12345 だった" }), "fp-A02", sha, dir), ["env_value_present:.env:SECRET_KEY"]);
-  assert.deepEqual(checkIssue(draft(sha, { extra: "development 環境の http://localhost:3000 で確かめた。src/task-management-controller-service.ts" }), "fp-A02", sha, dir), []);
+  assert.deepEqual(checkIssue(draft(sha, { extra: "鍵は abcdefgh12345 だった" }), "fp-A02", sha, dir, REPO), ["env_value_present:.env:SECRET_KEY"]);
+  assert.deepEqual(checkIssue(draft(sha, { extra: "development 環境の http://localhost:3000 で確かめた。src/task-management-controller-service.ts" }), "fp-A02", sha, dir, REPO), []);
   const token = draft(sha, { extra: `ghp_${"x".repeat(30)}` });
-  assert.equal(checkIssue(token, "fp-A02", sha, dir).length, 1);
-  assert.ok(checkIssue(token, "fp-A02", sha, dir)[0].startsWith("token_like:"));
+  assert.equal(checkIssue(token, "fp-A02", sha, dir, REPO).length, 1);
+  assert.ok(checkIssue(token, "fp-A02", sha, dir, REPO)[0].startsWith("token_like:"));
 });
 
 test("check-issue は英字だけの秘密の値も止める", () => {
   const { dir, sha } = repo();
-  assert.deepEqual(checkIssue(draft(sha, { extra: "ExampleSecretPassword で入れた" }), "fp-A02", sha, dir), ["env_value_present:.env:DB_PASSWORD"]);
+  assert.deepEqual(checkIssue(draft(sha, { extra: "ExampleSecretPassword で入れた" }), "fp-A02", sha, dir, REPO), ["env_value_present:.env:DB_PASSWORD"]);
 });
 
 test("check-issue は隣り合うリンクのそれぞれを検査する", () => {
   const { dir, sha } = repo();
   const two = draft(sha, { extra: `[a](https://github.com/o/r/blob/${sha}/app/a.rb)、[b](https://github.com/o/r/blob/main/app/a.rb)` });
-  assert.deepEqual(checkIssue(two, "fp-A02", sha, dir), ["link_not_pinned:https://github.com/o/r/blob/main/app/a.rb"]);
+  assert.deepEqual(checkIssue(two, "fp-A02", sha, dir, REPO), ["link_not_pinned:https://github.com/o/r/blob/main/app/a.rb"]);
   const paren = draft(sha, { extra: `[c](https://github.com/o/r/blob/${sha}/app/(auth)/page.tsx)` });
-  assert.deepEqual(checkIssue(paren, "fp-A02", sha, dir), []);
+  assert.deepEqual(checkIssue(paren, "fp-A02", sha, dir, REPO), []);
 });
 
 test("check-secrets は bare リポジトリを作業ツリーとして受け付けない", () => {

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# security-audit-verify-items の実行フォルダの作業ツリーを消す（items/ ledger/ issues/ は残す）。
+# security-audit-verify-items の実行フォルダの作業ツリーと、写した関連リポジトリ（deps/）を消す（items/ ledger/ issues/ refs/ は残す。ledger/deps.json も残す）。
 #   cleanup.sh <実行フォルダ>
 set -euo pipefail
 
@@ -11,3 +11,7 @@ run=$(cd -P "$1" 2>/dev/null && pwd) || { echo "実行フォルダがありま�
 [[ $run == "$root"/* && -f $run/repo ]] || { echo "このスキルの実行フォルダではありません: $1" >&2; exit 1; }
 remove_worktree "$run"
 echo "removed $run/worktree"
+if [[ -d $run/deps ]]; then
+  rm -rf "$run/deps"
+  echo "removed $run/deps"
+fi

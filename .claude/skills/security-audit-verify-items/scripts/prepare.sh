@@ -4,6 +4,9 @@
 #   prepare.sh --resume <実行フォルダ>           続きから始める実行フォルダの作業ツリーを、控えた SHA で作り直す
 # 出力: 「run <実行フォルダ>」「worktree <作業ツリー>」と、コピーした .env* の数（値は出さない）。
 # 実行フォルダは artifacts/security-audit-verify-items/<実行 ID>/ に作り、worktree/ items/ ledger/ issues/ refs/ を置く。
+# refs/ には security-audit-sync-issues の references/ の書式と反映の規則（issue-templates.md・issue-sync.md・fix-issues.md）を写す（新規・--resume とも、ないものだけ）。
+# .env* は、対象リポジトリの中の入れ子の作業ツリー（.git というファイルかフォルダを持つサブフォルダの中）からは写さない。
+# このスキル集のメインの checkout が origin の既定ブランチより遅れていれば「skills_behind <遅れているコミット数>」を出す（fetch はしない。判定できなければ出さない）。
 # 同じ対象リポジトリのほかの実行の作業ツリーは消さない（同時に動いている実行の作業ツリーを消さないため）。作業ツリーは各実行の cleanup.sh で消す。
 # 作業ツリーが残っているほかの実行フォルダは「other_worktree <実行フォルダ>」として出す（止まった実行の片付けの目安）。
 # 終了コード 1 は用意できない状態（理由を標準エラーに出す）、3 は引数の誤り。
@@ -26,15 +29,55 @@ root=$(runs_root) || die "実行フォルダの置き場所を決められませ
 mkdir -p "$root"
 root=$(cd -P "$root" && pwd)
 
+# 実行フォルダの refs/ に写す、security-audit-sync-issues の references/ のファイル
+ref_files=(issue-templates.md issue-sync.md fix-issues.md)
+
+# in_nested_worktree <対象のリポジトリ> <相対パス>  途中のフォルダに .git（ファイルかフォルダ）があれば 0（入れ子の作業ツリーの中）
+in_nested_worktree() {
+  local d=$2
+  while [[ $d == */* ]]; do
+    d=${d%/*}
+    [[ -e $1/$d/.git ]] && return 0
+  done
+  return 1
+}
+
 copy_env() {
   local repo=$1 wt=$2 n=0 f
   while IFS= read -r -d '' f; do
     [[ $f == */node_modules/* || $f == node_modules/* ]] && continue
+    in_nested_worktree "$repo" "$f" && continue
     mkdir -p "$wt/$(dirname "$f")"
     cp -p "$repo/$f" "$wt/$f"
     n=$((n + 1))
   done < <(git -C "$repo" ls-files -z --others -- ':(glob).env*' ':(glob)**/.env*')
   echo "env_copied $n"
+}
+
+# copy_refs <実行フォルダ>  security-audit-sync-issues の書式と反映の規則の写しを refs/ に入れる（ないものだけ写す。既にあるものは上書きしない）
+copy_refs() {
+  local run=$1 refs f
+  refs="$(cd -P "$root/../.." && pwd)/.agents/skills/security-audit-sync-issues/references"
+  for f in "${ref_files[@]}"; do
+    [[ -f $refs/$f ]] || die "参照ファイルがありません: $refs/$f"
+  done
+  mkdir -p "$run/refs"
+  for f in "${ref_files[@]}"; do
+    [[ -e $run/refs/$f ]] || cp "$refs/$f" "$run/refs/$f"
+  done
+}
+
+# skills_behind  このスキル集のメインの checkout の HEAD が origin の既定ブランチより遅れていれば知らせる（fetch はしない。判定できなければ何も出さない）
+skills_behind() {
+  local skills common main ref n
+  skills=$(cd -P "$(dirname "$0")/../../../.." 2>/dev/null && pwd) || return 0
+  common=$(git -C "$skills" rev-parse --git-common-dir 2>/dev/null) || return 0
+  [[ $common == /* ]] || common=$skills/$common
+  main=$(cd -P "$(dirname "$common")" 2>/dev/null && pwd) || return 0
+  ref=$(git -C "$main" symbolic-ref -q refs/remotes/origin/HEAD 2>/dev/null) || ref=refs/remotes/origin/main
+  n=$(git -C "$main" rev-list --count "HEAD..$ref" 2>/dev/null) || return 0
+  if [[ $n =~ ^[1-9][0-9]*$ ]]; then echo "skills_behind $n"; fi
+  return 0
 }
 
 make_worktree() {
@@ -54,7 +97,9 @@ if [[ ${1-} == --resume ]]; then
   [[ $# -eq 2 ]] || usage
   run=$(cd -P "$2" 2>/dev/null && pwd) || die "実行フォルダがありません: $2"
   [[ $run == "$root"/* && -f $run/repo && -f $run/sha ]] || die "このスキルの実行フォルダではありません: $2"
+  copy_refs "$run"
   make_worktree "$run"
+  skills_behind
   exit 0
 fi
 
@@ -76,9 +121,9 @@ done
 run="$root/$(date +%Y%m%d-%H%M%S)-$(od -An -N3 -tx1 /dev/urandom | tr -d ' \n')"
 mkdir -p "$run/items" "$run/ledger" "$run/issues" "$run/refs"
 # Security Audit Item Verifier は実行フォルダの外を読めないので、書式と反映の規則を写しておく
-refs="$(cd -P "$root/../.." && pwd)/.agents/skills/security-audit-sync-issues/references"
-cp "$refs/issue-templates.md" "$refs/issue-sync.md" "$run/refs/" 2>/dev/null || die "参照ファイルがありません: $refs"
+copy_refs "$run"
 printf '%s\n' "$repo" >"$run/repo"
 printf '%s\n' "$sha" >"$run/sha"
 make_worktree "$run"
 for old in "${others[@]+"${others[@]}"}"; do echo "other_worktree $old"; done
+skills_behind

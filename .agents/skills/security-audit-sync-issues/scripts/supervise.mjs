@@ -146,11 +146,18 @@ function cmdInit(dir) {
   return "starting";
 }
 
-function cmdAttach(dir, coordinatorId) {
+// model は Coordinator を起動したときのモデル名。審査で止まった回数をモデルごとに比べるために記録する
+function cmdAttach(dir, coordinatorId, ...rest) {
   if (!coordinatorId || coordinatorId.length > 256 || /[\s"'`]/.test(coordinatorId)) fail("coordinator_id が正しくありません");
+  let model = null;
+  if (rest.length) {
+    if (rest.length !== 2 || rest[0] !== "--model" || !SAFE_TOKEN.test(rest[1])) fail("使い方: attach <RUN_DIR> <coordinator_id> [--model <モデル名>]");
+    model = rest[1];
+  }
   const state = loadState(dir);
   if (state.stage !== "starting") fail(`段階が starting ではありません: ${state.stage}`);
   state.coordinator_id = coordinatorId;
+  state.coordinator_model = model;
   state.stage = "auditing";
   state.last_progress = progress(dir);
   pushEvent(state, { kind: "attach" });
@@ -377,6 +384,7 @@ function cmdSummary(dir) {
       model_fallback: files.model_fallback === "ok" ? fallbackCounts(fallback.value) : null,
       supervisor: {
         stage: state.ok ? state.value?.stage ?? null : null,
+        coordinator_model: state.ok && SAFE_TOKEN.test(state.value?.coordinator_model ?? "") ? state.value.coordinator_model : null,
         // その実行の上限（実行を始めたときの値）。auto_resumes は人の再開をまたいだ累計なので、上限を超えることがある
         max_auto_resumes: state.ok && Number.isInteger(state.value?.max_auto_resumes) ? state.value.max_auto_resumes : null,
         stops: count("stopped"),
@@ -441,7 +449,7 @@ function cmdState(dir) {
 
 const COMMANDS = {
   init: (a) => cmdInit(runDirOf(a[0])),
-  attach: (a) => cmdAttach(runDirOf(a[0]), a[1]),
+  attach: (a) => cmdAttach(runDirOf(a[0]), ...a.slice(1)),
   record: (a) => cmdRecord(runDirOf(a[0]), a[1], a[2]),
   next: (a) => cmdNext(runDirOf(a[0])),
   check: (a) => cmdCheck(runDirOf(a[0]), a[1]),

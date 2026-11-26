@@ -1,24 +1,24 @@
 # security-audit-workflow
 
 [Cloudflare の security-audit スキル](https://github.com/cloudflare/security-audit-skill)でプロジェクトをセキュリティ監査し、結果を GitHub の Issue にまとめるためのスキル集。\
-判断がつかなかった項目は、あとから別のモデルで調べ直して Issue を更新できる。\
-監査は Codex、調べ直しは Claude Code で行う。\
+Codex が広く洗い出し、Claude Code が要検証の項目を手元の材料と人の知識で確かめて、確定を修正 Issue にする。\
+Cloudflare の security-audit は、隔離した実行環境がないと所見を確定にしないので、ふつうの環境では ② が毎回の 2 段目になる。\
 初めて使うときは、[はじめに](#はじめに)から進める。
 
 ```mermaid
 flowchart LR
-  A["① 監査する<br>Codex"] -->|修正 Issue| C["③ 修正する<br>人か自動修正のエージェント"]
-  A -. 判断がつかない項目があるとき .-> B["② 調べ直す<br>Claude Code"]
-  B -->|確定した修正 Issue| C
+  A["① 洗い出す<br>Codex"] -->|要検証・未検証| B["② 確かめる<br>Claude Code"]
+  B -->|確定した修正 Issue| C["③ 修正する<br>人か自動修正のエージェント"]
+  A -. 隔離環境があれば修正 Issue .-> C
 ```
 
 | 段階 | エージェント | スキル | 結果 |
 | --- | --- | --- | --- |
-| ① 監査する | Codex | security-audit-sync-issues | 確定所見の修正 Issue と、全判定の集約 Issue ができる |
-| ② 調べ直す（必要なとき） | Claude Code | security-audit-verify-items | 判断がつかなかった項目を調べ直し、確定を修正 Issue にして集約 Issue を更新する |
+| ① 洗い出す | Codex | security-audit-sync-issues | 全判定の集約 Issue ができる（隔離環境があれば確定所見の修正 Issue もできる） |
+| ② 確かめる | Claude Code | security-audit-verify-items | 要検証などの項目を確かめ、確定を修正 Issue にして集約 Issue を更新する |
 | ③ 修正する | — | — | 人か自動修正のエージェントが、修正 Issue をもとに直す |
 
-監査 1 回ごとに、次の形の Issue ができる（ことばの意味は[用語](#用語)にある）。
+監査ごとに、次の形の Issue ができる（続きの監査では同じ集約 Issue を更新する。ことばの意味は[用語](#用語)にある）。
 
 ```text
 集約 Issue  [yyyy-mm-dd] セキュリティ監査の調査・判定一覧  agent:security-audit
@@ -34,6 +34,8 @@ flowchart LR
   Codex の監査でも、監査を分担するサブエージェントがガードレールで止まった作業は、GPT-6.1 Terra に 1 回だけ頼み直す（モデルで止まり方が変わるかを確かめるための試み）。\
   それでも止まった項目は Codex で調べ直しても結果が変わりにくいので、別のモデルで補う（実質的にクロス監査になる）。
 - **1 項目ずつなら Claude Code は止まりにくい**: Claude Code もガードレールに引っかかると Opus 4.8 に切り替わるが、Codex の監査結果を 1 項目ずつ調べる形では起きにくい。
+- **確定にするのは Claude Code**: Codex の監査は、隔離環境がないと要検証に留める。\
+  Claude Code は、関連するリポジトリ・使い捨てのコンテナでの実行・人の知識を材料に、項目ごとに確定か棄却かを決める。
 
 ## 推奨モデル
 
@@ -110,6 +112,7 @@ Claude Code を使わないときは、`git pull` のあと `scripts/link-skills
 ```text
 $security-audit-sync-issues
 $security-audit-sync-issues --profile quick
+$security-audit-sync-issues https://github.com/<owner>/<repo>/issues/42
 ```
 
 - 引数なしなら、時間のかかる `deep` で監査する。\
@@ -117,15 +120,19 @@ $security-audit-sync-issues --profile quick
 - 定期的に回すときは、Codex のデスクトップアプリでスケジュールを作り、監査するプロジェクトとこの呼び出しを設定して、モデルと推論レベルを[推奨モデル](#推奨モデル)に合わせる。\
   実行の時刻には、パソコンとアプリを起動しておく。\
   同じリポジトリへの監査は、同時に 1 件だけ動くようにする。
-- 終わると、確定所見が修正 Issue に、全判定が集約 Issue になる。\
-  自動で直せる修正 Issue には `agent:autofix` が付く。
+- 集約 Issue の URL（か番号）を渡すと **続きの監査** になり、新しい集約 Issue を作らずに、その Issue の未検証と未完了の工程・範囲を調べ直して差し替える。\
+  調べ直した内容や人の追記は消えない。
+- 終わると、全判定が集約 Issue になり、確定所見があれば修正 Issue になる。\
+  自動で直せる修正 Issue には `agent:autofix` が付く。\
+  最後の報告に、次の一手（続きの監査の呼び方や、② で確かめる項目）が書かれる。
 - 監査の成果物は `~/security-audit-skill/<リポジトリ名>/run-<N>/` に保存される（GitHub に書けなかったときも残る）。
 
 > [!IMPORTANT]
 > ガードレールで止まりにくくしてあるが、まれに監査そのものが止まる。\
-> 終わるはずの時間を過ぎても Issue ができていなければ、Codex のセッションを確かめ、止まっていれば続きを進めるよう指示する。
+> 終わるはずの時間を過ぎても Issue ができていなければ、Codex のセッションを確かめ、止まっていれば続きを進めるよう指示する。\
+> 監査を終えたあとで保留が残ったときは、報告の次の一手のとおり、集約 Issue を渡して続きの監査を呼ぶ。
 
-### ② 調べ直す（必要なとき、Claude Code）
+### ② 確かめる（Claude Code）
 
 集約 Issue に要検証・未検証・未完了の工程・範囲の項目が残ったら、同じプロジェクトの直下で、Claude Code から呼ぶ。
 
@@ -139,14 +146,18 @@ $security-audit-sync-issues --profile quick
 - **`A03 U01`**: 最新の集約 Issue の、番号が `A03` と `U01` の項目だけを調べる。
 - **`42 A03`**: Issue 番号 `42`（URL でもよい）の集約 Issue の、`A03` の項目だけを調べる。
 
-Security Audit Item Verifier が項目ごとに並列で調べ、途中でコマンドを実行してよいかの確認や、質問をすることがある。\
-すべての結果をユーザーと確かめてから、確定を修正 Issue にし、集約 Issue をまとめて更新する（コードは直さない）。\
+Security Audit Item Verifier が項目ごとに並列で調べ、途中でコマンドを実行してよいかを確認することがある。\
+手元にある関連リポジトリ（共有ライブラリ・インフラなど）は、対象が採用している版を写して材料にする。\
+質問は全項目が終わってからまとめて 1 回だけ聞き、そのあと書き込む内容を 1 回で確かめる。\
+了承を得てから、確定を修正 Issue にし、集約 Issue をまとめて更新する（コードは直さない）。\
+GitHub への書き込みは事前に許可していないスクリプトで行うので、書き込みのたびに権限モードの確認が入る。\
 作業用ファイルは、監査するプロジェクトではなく、このスキル集を clone した場所の `artifacts/security-audit-verify-items/`（gitignore 済み）に置く。\
-項目を分けて、別々のセッションで同時に呼んでもよい（集約 Issue への書き込みは 1 つずつ順番に行う）。
+項目を分けて、別々のセッションで同時に呼んでもよい（集約 Issue への書き込みは 1 つずつ順番に行う）。\
+ただし、根本原因が重なる項目は同じセッションにまとめる（修正 Issue の重複の確認から作成までは、セッションどうしで順番を取らない）。
 
 > [!WARNING]
 > 監査が未完了の集約 Issue は、security-audit-sync-issues で同じ実行を再開すると監査用の区画が組み直され、調べ直した内容が消えることがある。\
-> 同じ実行を再開するつもりなら、再開を済ませてから調べ直す。
+> 同じ実行を再開するつもりなら、再開を済ませてから調べ直す（集約 Issue を渡す続きの監査なら消えない）。
 
 ### ③ 修正する
 
@@ -160,8 +171,8 @@ Security Audit Item Verifier が項目ごとに並列で調べ、途中でコマ
 
 | スキル | エージェント | できること |
 | --- | --- | --- |
-| security-audit-sync-issues | [Codex](.agents/skills/security-audit-sync-issues/SKILL.md) | プロジェクトを自律監査し、確定所見の修正 Issue と全判定の集約 Issue を作成・更新する |
-| security-audit-verify-items | [Claude Code](.claude/skills/security-audit-verify-items/SKILL.md) | 集約 Issue の判断がつかなかった項目を Security Audit Item Verifier に並列で調べさせ、ユーザーと確かめてから、確定を修正 Issue にして集約 Issue を更新する |
+| security-audit-sync-issues | [Codex](.agents/skills/security-audit-sync-issues/SKILL.md) | プロジェクトを自律監査して全判定の集約 Issue を作成・更新し、確定所見があれば修正 Issue にする |
+| security-audit-verify-items | [Claude Code](.claude/skills/security-audit-verify-items/SKILL.md) | 集約 Issue の要検証などの項目を Security Audit Item Verifier に並列で確かめさせ、ユーザーと確かめてから、確定を修正 Issue にして集約 Issue を更新する |
 
 ## 準備と更新のスキル
 
@@ -175,14 +186,16 @@ Codex 用は `$スキル名`、Claude Code 用は `/スキル名` で呼ぶ。
 
 **security-audit-preflight**
 
+- すべてそろっていれば、1 行で知らせる。
 - Claude Code 用は、足りないコマンドとリンクを、了承を得てから入れる（macOS と Homebrew が前提）。
-- Codex 用は確かめるだけで、Cloudflare の `security-audit` と、Issue を書くリポジトリの状態も見る。
+- Codex 用は確かめるだけで、Cloudflare の `security-audit`、Issue を書くリポジトリの状態、確定に要る隔離環境があるかも見る。
 
 **security-audit-skills-update**
 
 - clone した元のフォルダ（メインの checkout）が既定ブランチ（通常は `main`）にあるときだけ、origin から fast-forward で取り込み、Claude Code と Codex の両方にリンクし直す。
 - 未コミットの変更と衝突するときや、履歴が分かれているときは、作業ツリーを変えずに取り込みを飛ばす。
 - git worktree から呼んでも、clone した元のフォルダで実行する。
+- 変わったものがなければ、成否の行だけを短く表示する（失敗は必ず表示する）。
 - 確認結果に足りないものがあっても、ここでは入れない（security-audit-preflight で入れる）。
 - Cloudflare の `security-audit` は更新しない（[はじめに](#はじめに)の手順 1 のとおりに更新する）。
 
@@ -190,7 +203,8 @@ Codex 用は `$スキル名`、Claude Code 用は `/スキル名` で呼ぶ。
 
 | 用語 | 意味 |
 | --- | --- |
-| 集約 Issue | 監査 1 回ごとに作る Issue で、すべての項目の判定と、終えられなかった工程・範囲を一覧にする |
+| 集約 Issue | 監査ごとに作る Issue で、すべての項目の判定と、終えられなかった工程・範囲を一覧にする（続きの監査では既存のものを更新する） |
+| 続きの監査 | security-audit-sync-issues に集約 Issue を渡して、その Issue の項目を調べ直して差し替える使い方 |
 | 修正 Issue | 確定所見を根本原因ごとにまとめた Issue で、集約 Issue のサブ Issue になる |
 | 確定 | 問題があると判断できた所見（修正 Issue になる） |
 | 要検証 | 確定か棄却かを決めるのに、仕様の確認、ローカルでの検証、環境・権限の確認などが必要な所見 |
@@ -198,10 +212,12 @@ Codex 用は `$スキル名`、Claude Code 用は `/スキル名` で呼ぶ。
 | 棄却 | 問題ではないと判断した疑い |
 | 未完了の工程・範囲 | 監査や Issue への反映を終えられなかった工程・範囲 |
 | 番号 | 集約 Issue の一覧表の No.（`A03`・`U01` など）で、調べ直す項目を指すのに使う |
+| 隔離環境 | 外部ネットワークを禁じるなど、OS で強制した実行環境。Cloudflare の security-audit は、これがないと所見を確定にしない |
+| 関連リポジトリ | 監査するプロジェクトが使う共有ライブラリやインフラなどのリポジトリで、security-audit-verify-items が版を固定して写し、材料にする |
 | ガードレール | モデルの安全のための仕組みで、引っかかると Codex は DayBreak を勧めて止まり、Claude Code は Opus 4.8 に切り替わる |
 | Security Audit Item Verifier | security-audit-verify-items が項目ごとに起動して調べさせる、Opus 5.5 のサブエージェント |
-| `agent:security-audit` | このスキル集で作った集約 Issue と修正 Issue のすべてに付くラベル |
-| `agent:autofix` | 質問せずに直せると判断した修正 Issue に付くラベルで、自動修正のエージェントに拾わせる目印になる |
+| `agent:security-audit` | このスキル集で作った集約 Issue と修正 Issue のすべてに付くラベル（なければ決まった色と説明で作る） |
+| `agent:autofix` | 質問せずに直せると判断した修正 Issue に付くラベルで、自動修正のエージェントに拾わせる目印になる（なければ決まった色と説明で作る） |
 
 ## つまずきやすい点
 
@@ -216,7 +232,13 @@ Codex 用は `$スキル名`、Claude Code 用は `/スキル名` で呼ぶ。
 - **集約 Issue の本文に詳細がなく、「詳細:」のリンクだけがある**: 本文が GitHub の上限を超えたので、区分ごとの詳細を集約 Issue のコメントに移した。\
   詳細を直すときは、リンク先のコメントの該当する項目を書き換える。
 - **調べ直した内容が集約 Issue から消えた**: 調べ直したあとに、security-audit-sync-issues で未完了の同じ実行を再開したため。\
-  再開するつもりなら、再開を済ませてから調べ直す。
+  再開するつもりなら、再開を済ませてから調べ直すか、集約 Issue を渡して続きの監査にする。
+- **Codex の監査で確定が 0 件になる**: 隔離環境がない環境では、Cloudflare の security-audit が所見を要検証に留めるため（ふつうの結果）。\
+  要検証の項目は security-audit-verify-items で確かめる。
+- **security-audit-verify-items が `skills_behind` と表示する**: このスキル集が origin より古い版で動いている。\
+  `/security-audit-skills-update` で更新してから使う。
+- **security-audit-verify-items が集約 Issue の書式の異常で止まる**: 手で書き換えたなどで、集約 Issue が書式どおりでない。\
+  表示された理由の語を見て書式に直すか、組み直しを別に頼む。
 
 ## スキルの追加・変更
 
