@@ -468,11 +468,11 @@ test("assemble は区分「削除」の U を統合の記録なしで消し、A 
   assert.ok(r.text.includes("## 未完了の工程・範囲（1件）"));
   assert.deepEqual(check(r.text), []);
   assert.throws(() => assemble(before, { items: [{ number: "A02", draft: "a02.md" }] }, dir), CheckError);
-  assert.throws(() => assemble(before, { items: [{ number: "U01", draft: "u01.md" }] }, dir, null, ["U02"]), (error) => error instanceof CheckError && error.message === "not_approved:U01");
-  assert.doesNotThrow(() => assemble(before, { items: [{ number: "U01", draft: "u01.md" }] }, dir, null, ["U01"]));
+  assert.throws(() => assemble(before, { items: [{ number: "U01", draft: "u01.md" }] }, dir, null, { targets: ["U02"], added: [] }), (error) => error instanceof CheckError && error.message === "not_approved:U01");
+  assert.doesNotThrow(() => assemble(before, { items: [{ number: "U01", draft: "u01.md" }] }, dir, null, { targets: ["U01"], added: [] }));
 });
 
-test("assemble の --targets は new の番号も確かめ、最後の U を消すと区分の説明も外し、結論の行の書き換えを通す", () => {
+test("assemble の --new は new の番号を確かめ、最後の U を消すと区分の説明も外し、結論の行の書き換えを通す", () => {
   // 前準備
   const dir = tmpDir();
   const before = summaryOf({ 要検証: [["A02", "認証"]], "未完了の工程・範囲": [["U01", "範囲"]] }, { conclusion: "**結論**: 確定 0件・要検証 1件・未検証 0件・棄却 0件、未完了の工程・範囲 1件。Issue 反映は pending。" });
@@ -480,10 +480,46 @@ test("assemble の --targets は new の番号も確かめ、最後の U を消�
   write(dir, "a05.md", draftText("確定", "A05", "high"));
   const plan = { items: [{ number: "U01", draft: "u01.md" }], new: [{ draft: "a05.md" }] };
   // 実行・検証
-  assert.throws(() => assemble(before, plan, dir, null, ["U01"]), (error) => error instanceof CheckError && error.message === "not_approved:A05");
-  const r = assemble(before, plan, dir, null, ["U01", "A05"]);
+  assert.throws(() => assemble(before, plan, dir, null, { targets: ["U01"], added: [] }), (error) => error instanceof CheckError && error.message === "not_approved:A05");
+  const r = assemble(before, plan, dir, null, { targets: ["U01"], added: ["A05"] });
   assert.ok(r.text.includes("## 未完了の工程・範囲（0件）\n\n0件。"));
   assert.ok(!r.text.includes("全体の状況を1〜2文で書く。"));
   const status = r.text.replace("Issue 反映は pending。", "Issue 反映は complete。");
   assert.deepEqual(checkBody(before, status, ["U01"], ["A05"], []), []);
+});
+
+test("assemble の CLI は --targets と --new で了承した番号を受け取る", () => {
+  // 前準備
+  const dir = tmpDir();
+  const before = summaryOf({ 要検証: [["A02", "認証"]], "未完了の工程・範囲": [["U01", "範囲"]] }, { conclusion: null });
+  write(dir, "u01.md", "区分: 削除\n");
+  write(dir, "a05.md", draftText("確定", "A05", "high"));
+  write(dir, "before.md", before);
+  write(dir, "plan.json", JSON.stringify({ items: [{ number: "U01", draft: "u01.md" }], new: [{ draft: "a05.md" }] }));
+  const out = path.join(dir, "after.md");
+  // 実行・検証
+  const ng = cli(["assemble", path.join(dir, "before.md"), path.join(dir, "plan.json"), out, "--targets", "U01"]);
+  assert.equal(ng.code, 1);
+  assert.equal(ng.out, "not_approved:A05");
+  const ok = cli(["assemble", path.join(dir, "before.md"), path.join(dir, "plan.json"), out, "--targets", "U01", "--new", "A05"]);
+  assert.equal(ok.code, 0, ok.err);
+  assert.equal(cli(["assemble", path.join(dir, "before.md"), path.join(dir, "plan.json"), out, "--new", "A05"]).code, 3);
+});
+
+test("assemble の了承は --targets と --new を取り違えると断り、--targets が空なら引数の誤りにする", () => {
+  // 前準備
+  const dir = tmpDir();
+  const before = summaryOf({ 要検証: [["A02", "認証"]], "未完了の工程・範囲": [["U01", "範囲"]] }, { conclusion: null });
+  write(dir, "u01.md", "区分: 削除\n");
+  write(dir, "a05.md", draftText("確定", "A05", "high"));
+  const plan = { items: [{ number: "U01", draft: "u01.md" }], new: [{ draft: "a05.md" }] };
+  // 実行・検証
+  assert.throws(() => assemble(before, plan, dir, null, { targets: ["U01", "A05"], added: [] }), (error) => error instanceof CheckError && error.message === "not_approved:A05");
+  assert.throws(() => assemble(before, plan, dir, null, { targets: [], added: ["U01", "A05"] }), (error) => error instanceof CheckError && error.message === "not_approved:U01");
+  write(dir, "before.md", before);
+  write(dir, "plan.json", JSON.stringify(plan));
+  const out = path.join(dir, "after.md");
+  const r = cli(["assemble", path.join(dir, "before.md"), path.join(dir, "plan.json"), out, "--targets", "", "--new", "A05"]);
+  assert.equal(r.code, 3);
+  assert.equal(fs.existsSync(out), false);
 });

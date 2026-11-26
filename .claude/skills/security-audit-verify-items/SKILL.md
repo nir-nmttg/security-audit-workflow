@@ -34,7 +34,7 @@ Codex の security-audit-sync-issues が作った集約 Issue（`[yyyy-mm-dd] �
   - 作業ツリー（`<run>/worktree`）の中。
   - 対象プロジェクトの既存の開発用イメージから起動する使い捨てのコンテナ（`docker run --rm --network none`）。マウントは作業ツリーだけにし、名前付きボリューム・`docker.sock`・`--privileged` は使わない。
   - ユーザーが動かしている開発用コンテナへの `docker exec`、その中での依存のインストール、デプロイ済みの環境への通信はしない。開発サーバーの起動は [開発サーバーと組み込みブラウザでの確認](references/dev-server.md) に従う。
-- security-audit-sync-issues が未完了の同じ実行を再開すると、集約 Issue の監査用の区画を台帳から組み直すので、このスキルで書いた更新が消えることがある。冒頭の監査の完了状況が未完了の集約 Issue に書くときは、そのことをユーザーに伝える（sync-issues に集約 Issue を渡す続きの監査なら、対象の項目だけを差し替えるので消えない）。
+- security-audit-sync-issues が未完了の同じ実行を再開すると、集約 Issue の監査用の区画を台帳から組み直すので、このスキルで書いた更新が消えることがある（集約 Issue を渡す続きの監査なら消えない）。監査が未完了の集約 Issue では、3b でそのことを伝える。
 - GitHub に書くのは親だけにする。Security Audit Item Verifier は hook で `gh` を止められ、Write ツールで書けるのは実行フォルダの `items/` だけ（hook は事故を防ぐためのもので、Bash の書き込み先までは見ない）。
 - 同じ対象リポジトリで、このスキルを同時に動かしてよい。ただし同じ項目を 2 つの実行で調べず、根本原因が重なる項目も同じ実行にまとめる（修正 Issue の重複の確認から作成までは、実行どうしで順番を取らないため）。実行ごとに作業ツリーを持ち、ほかの実行の作業ツリーは消さない（`prepare.sh` が `other_worktree` と出したものは、その実行が終わっていれば `cleanup.sh` で消せる）。集約 Issue への書き込みは 4. の `VERIFY lock` で 1 つの実行ずつにする（security-audit-sync-issues の続きの監査とも同じ lock を使う）。
 - 集約 Issue は、本文が上限（60,000 文字）を超えると、本文に一覧表を、区分ごとの詳細（`<details>` の並び）を集約 Issue のコメントに置く形になる（本文の各区分の表のあとの `詳細: [<区分>の詳細](<コメントの URL>)` がそのコメントを指す）。読むときは `VERIFY compose` で本文とコメントから 1 つの全文に戻し、調査・検査はその全文に対して行う。書くときは `VERIFY split` で本文とコメントに分ける。本文からリンクしていないコメントは詳細として読まない。
@@ -63,9 +63,12 @@ Codex の security-audit-sync-issues が作った集約 Issue（`[yyyy-mm-dd] �
 6. 作業ツリーに依存を入れる。対象プロジェクトの README・CI に従い、ロックファイルを変えない形で、ライフサイクルスクリプトを止めて入れる（`npm ci --ignore-scripts` など）。入れられなければ、ホストでの実行はできないものとして扱う。
 7. 作業ツリーの `.env*`・設定ファイル・docker-compose を読み、接続先と外部連携、起動で起きることを [開発サーバーと組み込みブラウザでの確認](references/dev-server.md) の「接続先と起動で起きることを確かめる」の基準で確かめる。結論として **使える確かめ方**（読む／実行: 作業ツリーで可・使い捨てのコンテナで可・不可と理由／画面: 可・不可と理由）を決め、`<run>/ledger/env-check.md` に書く（値は書かない）。開発用で外部へ送らないとわからなければ、実行と画面は不可にする。
 8. 集約 Issue（`gh api --hostname <host> "repos/<owner>/<repo>/issues/<番号>"` の出力）を `<run>/issues/summary-issue.json` に、そのコメントの全ページ（`gh api --hostname <host> --paginate --slurp "repos/<owner>/<repo>/issues/<番号>/comments?per_page=100"`）を `<run>/issues/summary-comments.json` に保存し、`VERIFY extract <run>/issues/summary-issue.json <run>/issues/summary-raw.md` と `VERIFY compose <run>/issues/summary-raw.md <run>/issues/summary-comments.json <run>/issues/summary.md` で全文にする（`--jq .body` は末尾に改行を足すので使わない）。リポジトリの Issue の一覧（`gh api --hostname <host> --paginate --slurp "repos/<owner>/<repo>/issues?state=all&per_page=100"` から `pull_request` のある項目を除いたもの）を `<run>/issues/issues.json` に、全 Issue のコメント（`repos/<owner>/<repo>/issues/comments?per_page=100` を全ページ）を `<run>/issues/comments.json` に保存する。`VERIFY items <run>/issues/summary.md > <run>/ledger/start.json` で調査開始時の控えを取る。
-   - `VERIFY compose` か `VERIFY items` が終了コード 2 で止まったら、集約 Issue が書式どおりでない（調べる対象の一覧を作れない）。出力の語（例 `section_missing:confirmed`）と、何が足りないかをユーザーに伝え、`cleanup.sh` で作業ツリーを消してから、調べずに終える（作業ツリーには `.env*` の写しがあるため）。書式への組み直しは別の依頼として扱い、組み直す前の本文を保存して、全項目の ID・詳細・リンク・人の追記が前後で対応することを確かめられるときだけ行う。
+   - `VERIFY compose` か `VERIFY items` が終了コード 2 で止まったら、集約 Issue が書式どおりでない（調べる対象の一覧を作れない）。出力の語（例 `section_missing:confirmed`）と、何が足りないかをユーザーに伝え、`cleanup.sh` で作業ツリーを消してから、調べずに終える（作業ツリーには `.env*` の写しがあるため）。書式への組み直しは別の依頼として扱う（前の本文と詳細コメントを保存し、全項目の ID・詳細・リンクと人の追記が前後で対応するときだけ書く）。
 9. 対象を決める。番号を省いたときは `start.json` の `default_targets`（要検証・未検証・未完了の工程・範囲の順）を一覧で見せ、外す項目を確かめる。
-10. **関連リポジトリ**を用意する。対象の項目の判定に、別のリポジトリの事実（スキーマ・インフラの設定・共有ライブラリなど）が効きそうなら、手元にあるそのリポジトリを探す（対象プロジェクトのロックファイル・submodule・設定から名前を拾う）。対象プロジェクトが採用している版を、ロックファイルの git の revision、submodule の SHA、なければ origin の既定ブランチの順で決め、`bash "${CLAUDE_SKILL_DIR}/scripts/deps.sh" <run> <手元のリポジトリ> <rev> --source lockfile|submodule|default_branch [--adopted yes]` で写す（追跡されているファイルだけを、origin にある SHA から写す。`--adopted yes` は採用している版と確かめられたときだけ）。採用している版がわからなければ、その事実は未確認事項に残す。写した関連リポジトリが同じ GitHub のホストにあれば、その Issue の一覧（`gh api --hostname <host> --paginate --slurp "repos/<owner>/<repo>/issues?state=all&per_page=100"` から `pull_request` のある項目を除いたもの）を `<run>/issues/deps/<owner>-<repo>-issues.json` に保存する（重複の候補を探すのに使う。書き込みはしない）。
+10. **関連リポジトリ**を用意する。対象の項目の判定に、別のリポジトリの事実（スキーマ・インフラの設定・共有ライブラリなど）が効きそうなら、手元にあるそのリポジトリを探す（対象プロジェクトのロックファイル・submodule・設定から名前を拾う）。
+    - 版: 対象プロジェクトが採用している版を、ロックファイルの git の revision、submodule の SHA、なければ origin の既定ブランチの順で決める。採用している版がわからなければ、その事実は未確認事項に残す。
+    - 写す: `bash "${CLAUDE_SKILL_DIR}/scripts/deps.sh" <run> <手元のリポジトリ> <rev> --source lockfile|submodule|default_branch [--adopted yes]`（追跡されているファイルだけを、origin にある SHA から写す。`--adopted yes` は採用している版と確かめられたときだけ）。
+    - Issue: 同じ GitHub のホストにあれば、その Issue の一覧（0. の 8. と同じ取り方）を `<run>/issues/deps/<owner>-<repo>-issues.json` に保存する（重複の候補を探すのに使う）。
 
 ## 1. 調査（Security Audit Item Verifier、並列）
 
@@ -91,7 +94,7 @@ Codex の security-audit-sync-issues が作った集約 Issue（`[yyyy-mm-dd] �
 
 ## 3. まとめて確認（親）
 
-見送り・停止を除く全項目が `done` になったら行う。ユーザーに聞くのは 3a と 3b の 2 回だけにする。
+見送り・停止を除く全項目が `done` になったら行う。この節でユーザーに聞くのは 3a と 3b の 2 回だけにする（2. の実行や画面の操作の了承は別）。
 
 1. 確定の修正 Issue の下書きと、集約 Issue の項目の下書きを全文読む。秘密・攻撃ペイロード・詳しい再現手順がないか、根拠と結論が合っているか、書式の長さの目安を守っているかを確かめ、直すところは SendMessage でその Security Audit Item Verifier に書き直させる。
 2. **3a. 残った質問をまとめて聞く**: 全項目の `ask_user` を集め、関連リポジトリや手元の資料で答えられるものは先に確かめる。残りを、番号・聞くこと・答えで何が決まるかの表にして 1 回だけ聞く（AskUserQuestion か、表を見せて文章で答えてもらう）。答えがあった項目だけ、SendMessage でその Security Audit Item Verifier に書き直させる。「わからない」・答えなしは今の結論のままにし、実行や書き込みの許可には数えない。
@@ -106,10 +109,14 @@ GitHub への書き込みはすべて `ISSUE` で行う。`ISSUE` は書く前�
 1. 書き込みの前の検査。どれかに外れたら、その項目は書かずに報告に回す。
    - 集約 Issue の最新の本文とコメントを 0. の 8. と同じ方法で取り、`<run>/ledger/raw-before.md`・`<run>/ledger/comments-before.json` と、`compose` した全文 `<run>/ledger/body-before.md` を作る。`VERIFY same <run>/ledger/start.json <run>/ledger/body-before.md <書き換える番号...>` で、書き換える項目が調査開始時から変わっていないかを確かめる。書き換える番号には、3. でまとめると決めた先の項目（対象外の項目でも）を含める。
    - 修正 Issue の下書きの `{{ID:<番号>-<key>}}` を、3. で決めた ID に置き換える。`VERIFY check-issue <下書き> --fingerprint <ID> --sha "$VERIFY_SHA" --worktree <run>/worktree --repo "$ISSUE_REPO"` を通す（別のリポジトリへのリンクは、`deps.sh` で写した SHA に固定されていれば通る）。
-   - 計画の JSON（`<run>/ledger/plan.json`。`items` に書き換える項目の下書き、`new` に未完了の範囲から足す新しい問題の下書き、`remove` に統合して消す番号、`values` に仮置きの値、`note` に追記の 1 行）を書き、`{{ISSUE_URL:<番号>-<key>}}`・`{{REFLECTION:<番号>-<key>}}` を仮の値にして `VERIFY assemble <run>/ledger/body-before.md <run>/ledger/plan.json <run>/ledger/body-trial.md --targets <書き換える番号>` で組み立てる（`--targets` は `same` に渡したのと同じ番号。区分の移動・並び順・見出しの件数・冒頭の `**結論**:` の件数・追記の行を入れ、`check-body` も通す）。`VERIFY check-secrets <run>/ledger/body-trial.md --worktree <run>/worktree` を通し、`VERIFY split <run>/ledger/body-trial.md <run>/ledger/split-trial --body <run>/ledger/raw-before.md --comments <run>/ledger/comments-before.json` が上限に収まる（終了コード 0）ことを確かめる。未完了の範囲から足す新しい問題には、最大の番号の次の `A` の番号を親が振る（`values` の `NUMBER:<番号>-<key>`）。調べ終えた未完了の工程・範囲を消すときは、下書きを `区分: 削除` にする。項目をまとめるときは、小さい番号を残し、残す項目の ID の箇条の末尾に `（統合: A07）` のように書く（[書式](../../../.agents/skills/security-audit-sync-issues/references/issue-templates.md) の「項目と番号」）。
+   - 計画を用意する: `<run>/ledger/plan.json` に、`items`（書き換える項目の下書き）、`new`（未完了の範囲から足す新しい問題の下書き）、`remove`（統合して消す番号）、`values`（仮置きの値）、`note`（追記の 1 行）を書く。
+     - 新しい問題には、最大の番号の次の `A` の番号を親が振る（`values` の `NUMBER:<番号>-<key>`）。調べ終えた未完了の工程・範囲を消すときは、下書きを `区分: 削除` にする。
+     - 項目をまとめるときは、小さい番号を残し、残す項目の ID の箇条の末尾に `（統合: A07）` のように書く（[書式](../../../.agents/skills/security-audit-sync-issues/references/issue-templates.md) の「項目と番号」）。
+   - 試しに組み立てる: `{{ISSUE_URL:<番号>-<key>}}`・`{{REFLECTION:<番号>-<key>}}` を仮の値にして `VERIFY assemble <run>/ledger/body-before.md <run>/ledger/plan.json <run>/ledger/body-trial.md --targets <書き換える番号> [--new <新しく足す番号>]` を通す（`--targets` は `same` に渡したのと同じ番号。区分の移動・並び順・見出しの件数・冒頭の `**結論**:` の件数・追記の行を入れ、`check-body` も通す）。
+   - 検査する: `VERIFY check-secrets <run>/ledger/body-trial.md --worktree <run>/worktree` を通し、`VERIFY split <run>/ledger/body-trial.md <run>/ledger/split-trial --body <run>/ledger/raw-before.md --comments <run>/ledger/comments-before.json` が上限に収まる（終了コード 0）ことを確かめる。
 2. 確定の問題ごとに修正 Issue を作る。
    - `ISSUE create <run> <下書き> --item <番号> --key <key> --fingerprint <ID> --sha "$VERIFY_SHA"` で作る（下書きの 1 行目の `# ` のあとをタイトル、残りを本文にし、ラベル `agent:security-audit` を付ける）。`exists <URL>` はこの実行で作り済みなので、その URL を使い、済んでいない操作だけを行う。`duplicate <URL>` は同じ fingerprint の Issue があるので作らずに報告に回す。そのほかの語で止まったら、理由を報告に回す。
-   - `agent:autofix` は、付ける直前に Issue と全コメントを読み直し、[自動修正できるか確かめる](../../../.agents/skills/security-audit-sync-issues/references/fix-issues.md#自動修正できるか確かめる) の条件を満たすときだけ `ISSUE label <run> <URL> agent:autofix` で付ける。ベースブランチの条件は、`git ls-remote origin <ベース>` の今の先頭が `VERIFY_SHA` と同じなら満たす。違うときだけ、根拠と修正方針がなお当てはまるかを差分で確かめる。
+   - `agent:autofix` は、付ける直前に Issue と全コメントを読み直し、[自動修正できるか確かめる](../../../.agents/skills/security-audit-sync-issues/references/fix-issues.md#自動修正できるか確かめる) の条件を満たすときだけ `ISSUE label <run> <URL> agent:autofix` で付ける（ベースブランチの条件は、調べた `VERIFY_SHA` とベースの今の先頭を比べる）。
    - `ISSUE sub-issue <run> <URL>` で集約 Issue のサブ Issue にする（`other_parent <URL>` は別の親があるので付け替えない。詳細の反映結果に書く）。
 3. 3b で決めた既存 Issue の扱いを行う。
    - サブ Issue にして書き直す: 書く直前に Issue を取り直して `<run>/ledger/<番号>-before.md` に本文を保存し、[既存 Issue を更新できるか確かめる](../../../.agents/skills/security-audit-sync-issues/references/fix-issues.md#2-既存-issue-を更新できるか確かめる)（監査対象 SHA と報告確定日時の新旧、最初の fingerprint と別名を保つ）と、3b で見せたときの区画との差を確かめる。新旧がわからない・ほかの実行が書き換えていたときは本文を書かず、コメントの案を報告に回す。書けるときは、区画の中だけを書き直した本文で `ISSUE edit-body <run> <URL> <新しい本文> --before <run>/ledger/<番号>-before.md`（タイトルの深刻度を変えるときは `--title`）を実行し、`ISSUE sub-issue` を行う。
@@ -117,7 +124,7 @@ GitHub への書き込みはすべて `ISSUE` で行う。`ISSUE` は書く前�
 4. 集約 Issue を書く。
    - `VERIFY lock <run> <集約 Issue の URL>` で書き込みの順番を取る。`locked <実行フォルダ> <時刻>` が出たら、ほかの実行が書いている。1 分ずつ待って取り直す（30 分を過ぎた lock は引き継がれる）。`ISSUE` は集約 Issue に書く前に lock を取り直し、`ok` 以外なら書かずに止まる。lock は書き終えたら、または書くのをやめたら `VERIFY unlock <run> <集約 Issue の URL>` で外す。
    - lock を取ったら本文とコメントを取り直して `compose` し、`body-before.md` と違えば書かずに lock を外して 1. からやり直す（作った修正 Issue は `ISSUE create` が `exists` で使い回す）。
-   - `plan.json` の `values` を実際の値（修正 Issue の URL、反映結果）にし、`note` に `**<日付> 追記（手動）**: <何をしたか>` を書いて、`VERIFY assemble <run>/ledger/body-before.md <run>/ledger/plan.json <run>/ledger/body-after.md --targets <書き換える番号>` で組み立てる。`counts …` が出たら（冒頭に `**結論**:` の行がない古い書式）、`body-after.md` の冒頭の件数を手で直し、同じ `--targets`・`--new`・`--remove` で `VERIFY check-body <run>/ledger/body-before.md <run>/ledger/body-after.md` を通し直す。`VERIFY check-secrets` を通す。
+   - `plan.json` の `values` を実際の値（修正 Issue の URL、反映結果）にし、`note` に `**<日付> 追記（手動）**: <何をしたか>` を書いて、1. と同じ番号で `VERIFY assemble <run>/ledger/body-before.md <run>/ledger/plan.json <run>/ledger/body-after.md --targets … [--new …]` で組み立てる。`counts …` が出たら（冒頭に `**結論**:` の行がない古い書式）、`body-after.md` の冒頭の件数を手で直し、同じ `--targets`・`--new` と、統合して消した番号の `--remove` で `VERIFY check-body <run>/ledger/body-before.md <run>/ledger/body-after.md` を通し直す。`VERIFY check-secrets` を通す。
    - `VERIFY split <run>/ledger/body-after.md <run>/ledger/split --body <run>/ledger/raw-before.md --comments <run>/ledger/comments-before.json` で、本文（`split/body.md`）と詳細コメント（`split/details-*.md`）と計画（`split/plan.json`）を作り、`check-secrets` を詳細コメントの各ファイルに通す（`split/body.md` は詳細コメントの URL の仮置きを含むので、`fill` で URL を入れたあとの本文に通す）。`mode single` なら `ISSUE edit-body <run> <集約 Issue の URL> <run>/ledger/split/body.md --before <run>/ledger/raw-before.md` で本文だけを書く。
    - `mode split` なら、計画の順に書く。計画は、リンク中のコメントを書き換えないように、`create`（新しいコメント）→ 本文 → `retire` の順に並ぶ。途中で止まっても、本文とリンク先のコメントの組は前のまま読める。
      - `create` は `ISSUE comment-create <run> <file>` で作り、出力の URL を控える。`same` は書かない。

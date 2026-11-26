@@ -8,7 +8,7 @@
 //                                         （summary-body.mjs）対象の項目・件数・追記の行のほかが変わっていないかを確かめる（外れたら終了コード 1）
 //                                         文字数の上限は、本文とコメントに分ける split で確かめる
 //                                         --remove は統合して消す対象の番号（残す項目の詳細に「（統合: A04）」が要る）
-//   assemble <前の全文> <計画の JSON> <出力> [--targets <了承した番号>] [--bump-revision <開始時の版>]
+//   assemble <前の全文> <計画の JSON> <出力> [--targets <番号> [--new <番号>]] [--bump-revision <開始時の版>]
 //                                         （summary-body.mjs）計画どおりに項目を移し、件数と並び順を直した全文を書く（外れたら書かずに終了コード 1）
 //   check <全文>                           （summary-body.mjs）番号・件数・並び順を確かめる（外れたら理由を 1 行ずつ出して終了コード 1）
 //   check-issue <下書き> --fingerprint <ID> --sha <SHA> --worktree <作業ツリー> --repo <host>/<owner>/<repo>

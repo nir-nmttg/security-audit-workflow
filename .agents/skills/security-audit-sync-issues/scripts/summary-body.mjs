@@ -18,8 +18,8 @@
 //                                                 --remove は統合して消す対象の番号（残す項目の詳細に「（統合: A04）」が要る）
 //                                                 --bump-revision を付けたときだけ、版が <開始時の版> から +1 に変わることを許す
 //   check <全文>                                   番号の一意、件数、一覧表と詳細の数・順、区分の並び順を確かめる（外れたら理由を 1 行ずつ出して終了コード 1）
-//   assemble <前の全文> <計画の JSON> <出力> [--targets <了承した番号>] [--bump-revision <開始時の版>]
-//                                                 --targets を渡すと、計画の items・remove・new の番号がその中に収まることも確かめる（了承していない項目を書かないため）
+//   assemble <前の全文> <計画の JSON> <出力> [--targets <番号> [--new <番号>]] [--bump-revision <開始時の版>]
+//                                                 --targets を渡すと、計画の items・remove がその中に、new の番号が --new の中に収まることも確かめる（了承していない項目を書かないため）
 //                                                 区分「削除」の下書きは、U の項目なら統合の記録なしで消す（調べ終えた範囲）。A の項目は remove と同じく統合の記録が要る
 //                                                 前の全文に計画（項目の移動・追加・削除と下書き）を当てた全文を書く（検査に外れたら書かずに終了コード 1）
 //   lock <実行フォルダ> <集約 Issue の URL>        集約 Issue への書き込みを 1 つの実行に限る（ほかの実行が持っていれば終了コード 1）
@@ -658,11 +658,12 @@ function conclusionOf(line, counts) {
 }
 
 // 前の全文に計画を当てた全文を作り、検査してから返す（検査に外れたら CheckError。書く前に止める）
+// approved は了承した番号（{ targets: 書き換える番号, added: 新しく足す番号 }）。null なら照合しない
 export function assemble(beforeText, plan, baseDir, bump = null, approved = null) {
   const p = validated(scan(beforeText));
   const spec = planOf(plan);
   if (approved) {
-    const outside = [...spec.items.map((it) => it.number), ...spec.remove].filter((n) => !approved.includes(n));
+    const outside = [...spec.items.map((it) => it.number), ...spec.remove].filter((n) => !approved.targets.includes(n));
     if (outside.length) throw new CheckError(outside.map((n) => `not_approved:${n}`).join("\n"));
   }
   const draftAt = (file) => draftOf(file, applyValues(readText(path.resolve(baseDir, file)), spec.values));
@@ -706,7 +707,7 @@ export function assemble(beforeText, plan, baseDir, bump = null, approved = null
   for (const n of spec.added) {
     const d = draftAt(n.draft);
     if (d.kind === "削除") throw new CheckError(`draft_format:${n.draft}`);
-    if (approved && !approved.includes(d.num)) throw new CheckError(`not_approved:${d.num}`);
+    if (approved && !approved.added.includes(d.num)) throw new CheckError(`not_approved:${d.num}`);
     added.push(d.num);
     moved.push({ num: d.num, section: d.kind, line: d.line, details: d.details });
   }
@@ -1019,9 +1020,10 @@ export const COMMANDS = {
     return "ok";
   },
   assemble: (args) => {
-    const o = options(args, ["targets", "bump-revision"], [], ["targets"]);
-    if (o._.length !== 3) fail(`使い方: assemble <前の全文> <計画の JSON> <出力> [--targets <了承した番号>] [--bump-revision <開始時の版>]`);
-    const approved = o.targets === undefined ? null : numbersOf(o.targets);
+    const o = options(args, ["targets", "new", "bump-revision"], [], ["targets", "new"]);
+    if (o._.length !== 3 || (o.new !== undefined && o.targets === undefined)) fail(`使い方: assemble <前の全文> <計画の JSON> <出力> [--targets <番号> [--new <番号>]] [--bump-revision <開始時の版>]`);
+    const approved = o.targets === undefined ? null : { targets: numbersOf(o.targets), added: numbersOf(o.new) };
+    if (approved && approved.targets.length === 0) fail("--targets に番号を 1 つ以上指定してください（check-body と同じ）");
     const r = assemble(readText(o._[0]), readJson(o._[1]), path.dirname(path.resolve(o._[1])), bumpOf(o), approved);
     fs.writeFileSync(o._[2], r.text);
     if (r.conclusion) return "ok";

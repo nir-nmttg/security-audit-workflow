@@ -22,7 +22,6 @@ $security-audit-sync-issues [--profile quick|standard|deep] [<集約 Issue の U
 ```
 
 - 集約 Issue を指定したときは **続きの監査** にする。新しい集約 Issue を作らず、指定した Issue の項目（既定は未検証と未完了の工程・範囲）を今回の監査で調べ直して差し替える。手順は [続きの監査で既存の集約 Issue に書く](references/issue-sync.md#5-続きの監査で既存の集約-issue-に書く) に従う。指定がなければ、実行ごとに集約 Issue を1件作る。
-
 - `--profile` の既定値は `deep`。指定された `quick`・`standard`・`deep` のいずれか、未指定なら `deep` を、元スキルにプロファイルとして明示して渡す（元スキルの既定は `standard` なので任せない）。それ以外の値が指定された場合は使える値を案内し、監査を保留する。
 - `git rev-parse --show-toplevel` で監査対象を確かめる。Git リポジトリを特定できない場合は、監査するプロジェクトの直下で実行するよう案内する。
 
@@ -57,7 +56,7 @@ Coordinator を起動できない場合や、Coordinator が `unsupported` を�
 3. [Issue に反映する手順](references/issue-sync.md) に従う。独立検証済みの `confirmed` が1件以上あるときだけ [修正 Issue に反映する](references/fix-issues.md) を読み、根本原因ごとの修正 Issue に反映する。[本文の書式](references/issue-templates.md) を使い、タイトルには影響に応じた深刻度を付ける。
 4. 修正 Issue の反映結果を確かめ、確定・要検証・未検証・棄却を一覧表と項目ごとの詳細にした集約 Issue を作成・更新する（続きの監査では、指定した Issue の対象の項目だけを差し替える）。確定所見は、題名を修正 Issue へのリンクにして対応状況（`open`・`merged` など）を載せ、反映結果は詳細に書く。タイトルは実行時に記録したタイムゾーンの日付で `[yyyy-mm-dd] セキュリティ監査の調査・判定一覧` とする。
 5. 日本語で監査と Issue 反映の完了状況・監査対象 SHA・4区分の件数・集約 Issue の URL を報告する。確かめられない件数は不明とする。`REPORT.md` を保存できたら絶対パスを示し、保存できなければ保存済み成果物の絶対パスと停止理由を示す。修正 Issue は作成／更新／変更なし／保留の件数と URL、`agent:autofix` を追加したものを示す。Terra への頼み直しは、`model-fallback.json` の件数（審査で止まった元の Worker の数、Terra を起動できた数、結果ごとの数、見送りの理由ごとの数）を示し、記録がなければ記録なし、再開後の分だけなら再開後の分と書く。別名の追加・古い結果・再発候補・権限不足・追加検証や人の判断が必要な項目には理由を添える。
-6. 最後に **次の一手** を1つ書く。保留や未検証が残り集約 Issue があれば「続きは `$security-audit-sync-issues <集約 Issue の URL>`」、集約 Issue がまだなければ（`summary_url` が `null`）「同じ会話で『続けてください』と送る」と実行フォルダの絶対パス、要検証があれば「security-audit-verify-items で確かめられる」と書く。
+6. 最後に **次の一手** を、当てはまるものだけ短く書く。保留や未検証が残り集約 Issue があれば「続きは `$security-audit-sync-issues <集約 Issue の URL>`」、集約 Issue がまだなければ（`summary_url` が `null`）「同じ会話で『続けてください』と送る」と実行フォルダの絶対パス、要検証があり集約 Issue があれば「security-audit-verify-items に集約 Issue の URL を渡して確かめられる」と書く。
 
 ## 監査の一部が止まった場合
 
